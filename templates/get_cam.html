@@ -1,6 +1,10 @@
 <html>
     <head>
-        <title>Raspberry Camera</title>
+        <!-- <meta http-equiv="refresh" content="1"> -->
+        <meta name="description" content="M&N Home CCTV">
+        <meta name="author" content="Michael Lee">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>M&N Home CCTV</title>
         <style>
             img {
                 width: 100%;
@@ -9,14 +13,41 @@
         </style>
     </head>
     <body>
-        <center>
-            <h3><img  class="camera-bg" style="width: 80%; background-attachment: fixed;" id="bg" class="center" src="{{ url_for('video_feed') }}"></h3>
-        </center>
+        <div style="background-color:#134f2c">
+            <center>
+                <h1 style="color:white;">M&N Home CCTV</h1>
+            </center>
+        </div>
+        <div>
+            <center>
+                <h3><img  class="camera-bg" style="width: 80%; background-attachment: fixed;" id="bg" class="center" src="{{ url_for('video_feed') }}"></h3>
+            </center>
+        </div>
         <p>
-        <center>
-            <button class="favorite styled" type="button" onClick="location.href='/'">
-                Back
-            </button>
-        </center>
+        <div>
+            <center>
+                <button type="button" onClick="location.href='/'">
+                    Back
+                </button>
+            </center>
+        </div>
+        <p>
+        <div>
+            <center>
+                <button type="button" onClick="left()">
+                    Left
+                </button>
+            </center>
+        </div>
+
+        <script>
+            function left() {
+                fetch("/servo/left")
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(data);
+                    });
+            }
+        </script>
     </body>
 </html>

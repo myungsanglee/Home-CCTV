@@ -10,7 +10,7 @@ class PanTiltServo:
         pca9685 = PCA9685(i2cBus)
         self.servo00 = ServoPCA9685(pca9685, CHANNEL00) # Tilt Servo
         self.servo01 = ServoPCA9685(pca9685, CHANNEL01) # Pan Servo
-        self.tilt_angle = 90
+        self.tilt_angle = 100
         self.pan_angle = 90
         self.servo00.set_angle(self.tilt_angle)
         self.servo01.set_angle(self.pan_angle)
@@ -32,6 +32,7 @@ class PanTiltServo:
         
 if __name__ == '__main__':
     pan_tilt_servo = PanTiltServo()
+    per_angle = 5
     
     def on_press(key):
         try:
@@ -45,16 +46,16 @@ if __name__ == '__main__':
             # Stop listener
             return False
         elif key == keyboard.Key.right:
-            angle = min(180, pan_tilt_servo.get_pan_angle() + 2)
+            angle = min(180, pan_tilt_servo.get_pan_angle() + per_angle)
             pan_tilt_servo.set_pan_angle(angle)
         elif key == keyboard.Key.left:
-            angle = max(0, pan_tilt_servo.get_pan_angle() - 2)
+            angle = max(0, pan_tilt_servo.get_pan_angle() - per_angle)
             pan_tilt_servo.set_pan_angle(angle)
         elif key == keyboard.Key.up:
-            angle = min(180, pan_tilt_servo.get_tilt_angle() + 2)
+            angle = min(180, pan_tilt_servo.get_tilt_angle() + per_angle)
             pan_tilt_servo.set_tilt_angle(angle)
         elif key == keyboard.Key.down:
-            angle = max(0, pan_tilt_servo.get_tilt_angle() - 2)
+            angle = max(0, pan_tilt_servo.get_tilt_angle() - per_angle)
             pan_tilt_servo.set_tilt_angle(angle)
 
     # Collect events until released
