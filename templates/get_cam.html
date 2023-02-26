@@ -24,6 +24,7 @@
             </center>
         </div>
         <p>
+        <!--
         <div>
             <center>
                 <button type="button" onClick="location.href='/'">
@@ -31,18 +32,53 @@
                 </button>
             </center>
         </div>
-        <p>
+        -->
         <div>
             <center>
-                <button type="button" onClick="left()">
+                <button type="button" onClick="servo_up()">
+                    Up
+                </button>
+                <p>
+                <button type="button" onClick="servo_left()">
                     Left
+                </button>
+                <button type="button" onClick="servo_right()">
+                    Right
+                </button>
+                <p>
+                <button type="button" onClick="servo_down()">
+                    Down
                 </button>
             </center>
         </div>
 
         <script>
-            function left() {
+            function servo_right() {
+                fetch("/servo/right")
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(data);
+                    });
+            }
+
+            function servo_left() {
                 fetch("/servo/left")
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(data);
+                    });
+            }
+
+            function servo_up() {
+                fetch("/servo/up")
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(data);
+                    });
+            }
+
+            function servo_down() {
+                fetch("/servo/down")
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);

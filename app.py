@@ -4,12 +4,15 @@ import cv2
 from flask import Flask, render_template, Response, request, redirect, url_for, session, flash
 
 from picam import VideoGet
+from pan_tilt import PanTiltServo
 
 app = Flask(__name__)
 app.secret_key = 'secretkey'
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=10)
 
 picam = VideoGet().start()
+pan_tilt_servo = PanTiltServo()
+per_angle = 5
 
 def gen_frames():
     while True:
@@ -64,9 +67,28 @@ def get_cam():
 def video_feed():
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/servo/right')
+def servo_right():
+    angle = min(180, pan_tilt_servo.get_pan_angle() + per_angle)
+    pan_tilt_servo.set_pan_angle(angle)
+    return 'ok'
+
 @app.route('/servo/left')
-def left():
-    print('Left')
+def servo_left():
+    angle = max(0, pan_tilt_servo.get_pan_angle() - per_angle)
+    pan_tilt_servo.set_pan_angle(angle)
+    return 'ok'
+
+@app.route('/servo/up')
+def servo_up():
+    angle = min(180, pan_tilt_servo.get_tilt_angle() + per_angle)
+    pan_tilt_servo.set_tilt_angle(angle)
+    return 'ok'
+
+@app.route('/servo/down')
+def servo_down():
+    angle = max(0, pan_tilt_servo.get_tilt_angle() - per_angle)
+    pan_tilt_servo.set_tilt_angle(angle)
     return 'ok'
 
 if __name__ == '__main__':
