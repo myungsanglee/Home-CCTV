@@ -10,10 +10,6 @@ app = Flask(__name__)
 app.secret_key = 'secretkey'
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=10)
 
-picam = VideoGet().start()
-pan_tilt_servo = PanTiltServo()
-per_angle = 5
-
 def gen_frames():
     while True:
         frame = picam.frame
@@ -22,9 +18,19 @@ def gen_frames():
                b'Content-Type: image/jpeg\r\n\r\n' + frame.tobytes() + b'\r\n\r\n')
 
 def valid_login(id, password):
-    if id == 'natalia' and password == 'natalia':
-        return True
-    else:
+    login_db = {
+        'michael': 'leeprs0577',
+        'natalia': 'natalia0114',
+    }
+    
+    try:
+        value = login_db[id]
+        if value == password:
+            return True
+        else:
+            return False
+        
+    except KeyError:
         return False
 
 @app.route('/')
@@ -46,7 +52,7 @@ def login():
             # return render_template('index.html')
             return redirect(url_for('index'))
         else:
-            flash('Invalid ID / Password')
+            flash('Invalid ID or Password')
 
     return render_template('/login.html')
 
@@ -92,5 +98,8 @@ def servo_down():
     return 'ok'
 
 if __name__ == '__main__':
-    # app.run(host='172.30.1.26', port='5000', debug=False, threaded=True)
+    picam = VideoGet().start()
+    pan_tilt_servo = PanTiltServo()
+    per_angle = 5
+    
     app.run(host='0.0.0.0', port='5000', debug=False, threaded=True)
