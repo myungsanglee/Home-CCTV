@@ -27,20 +27,19 @@
               <div class="card text-white" style="border-radius: 1rem;">
                 <div class="card-body p-5 text-center">
       
-                  <form class="mb-md-5 mt-md-4 pb-5" method="post" action="/login">
+                  <form class="my-4" method="post" action="/login">
       
-                    <h2 class="fw-bold mb-2 text-uppercase">Login</h2>
-                    <p class="text-white-50 mb-5">Please enter your id and password!</p>
+                    <h2 class="fw-bold mb-5 text-uppercase">Login</h2>
       
-                    <div class="form-outline mb-4">
-                      <input type="text" name="id" class="form-control form-control-lg text-black" placeholder="ID">
+                    <div class="form-floating mb-4">
+                      <input type="text" name="id" class="form-control form-control-lg text-black" id='floatingInput' placeholder="ID">
+                      <label class="text-black" for="floatingInput">ID</label>
                     </div>
       
-                    <div class="form-outline mb-4">
-                      <input type="password" name="password" class="form-control form-control-lg text-black" placeholder="Password">
+                    <div class="form-floating mb-4">
+                      <input type="password" name="password" class="form-control form-control-lg text-black" id="floatingPassword" placeholder="Password">
+                      <label class="text-black" for="floatingPassword">Password</label>
                     </div>
-      
-                    <p>
 
                     <input class="btn btn-outline-light btn-lg px-5" type="submit" value="Login">
       
