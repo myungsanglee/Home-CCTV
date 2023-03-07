@@ -4,55 +4,114 @@
         <meta name="description" content="M&N Home CCTV">
         <meta name="author" content="Michael Lee">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        <!-- Bootstrap core CSS -->
+        <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+        
+        <!-- Bootstrap Font Icon CSS -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+        
+        <!-- Custom CSS -->
+        <link rel="stylesheet" href="/static/css/get_cam_style.css">
+        
         <title>M&N Home CCTV</title>
-        <style>
-            img {
-                width: 100%;
-                border: 10px solid black;
-            }
-        </style>
     </head>
     <body>
-        <div style="background-color:#134f2c">
-            <center>
-                <h1 style="color:white;">M&N Home CCTV</h1>
-            </center>
-        </div>
-        <div>
-            <center>
-                <h3><img  class="camera-bg" style="width: 80%; background-attachment: fixed;" id="bg" class="center" src="{{ url_for('video_feed') }}"></h3>
-            </center>
-        </div>
-        <p>
-        <!--
-        <div>
-            <center>
-                <button type="button" onClick="location.href='/'">
-                    Back
-                </button>
-            </center>
-        </div>
-        -->
-        <div>
-            <center>
-                <button type="button" onClick="servo_up()">
-                    Up
-                </button>
-                <p>
-                <button type="button" onClick="servo_left()">
-                    Left
-                </button>
-                <button type="button" onClick="servo_right()">
-                    Right
-                </button>
-                <p>
-                <button type="button" onClick="servo_down()">
-                    Down
-                </button>
-            </center>
+        <nav class="navbar p-3">
+            <div class="container-fluid">
+                <a href="/" class="navbar-brand ">
+                    <span class="fs-4 text-white">M&N Home CCTV</span>
+                </a>
+                
+                <div class="d-flex justify-content-end">
+                    <button class="btn btn-outline-light" type="button" onClick="location.href='/logout'">Logout</button>
+                </div>
+            </div>
+        </nav>
+
+        <img  class="img-fluid mx-auto d-block rounded my-3" src="{{ url_for('video_feed') }}">
+
+        <div class="container">
+            <div class="row align-items-center justify-content-evenly">
+                <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
+                    <button class='btn btn-outline-success' type="button" onClick="servo_center()">
+                        Center
+                    </button>
+                </div>
+
+                <div class="col-5 col-md-7 col-lg-6 col-xl-5 text-center">
+                    <div class="row">
+                        <div class="col">
+                            <button class='btn btn-outline-success' type="button" onClick="servo_up()">
+                                <span class="bi bi-arrow-up-circle"></span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col">
+                            <button class='btn btn-outline-success' type="button" onClick="servo_left()">
+                                <span class="bi bi-arrow-left-circle"></span>
+                            </button>
+                        </div>
+
+                        <div class="col">
+                            <button class='btn btn-outline-success' type="button" onClick="servo_right()">
+                                <span class="bi bi-arrow-right-circle"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col">
+                            <button class='btn btn-outline-success' type="button" onClick="servo_down()">
+                                <span class="bi bi-arrow-down-circle"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios1" value="5" onClick='set_angle(event)' checked>
+                        <label class="form-check-label" for="degreeRadios1">
+                            5&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios2" value="10" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios2">
+                            10&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios3" value="15" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios3">
+                            15&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios4" value="20" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios4">
+                            20&deg;
+                        </label>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <script>
+            function servo_center() {
+                fetch("/servo/center")
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(data);
+                    });
+            }
+
             function servo_right() {
                 fetch("/servo/right")
                     .then(response => response.text())
@@ -83,6 +142,22 @@
                     .then(data => {
                         console.log(data);
                     });
+            }
+
+            function set_angle() {
+                fetch("/set/angle", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        angle: event.target.value
+                    })
+                })
+                .then(response => response.text())
+                .then(data => {
+                    console.log(data);
+                });
             }
         </script>
     </body>
