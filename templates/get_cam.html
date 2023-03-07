@@ -35,7 +35,7 @@
             <div class="row align-items-center justify-content-evenly">
                 <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
                     <button class='btn btn-outline-success' type="button" onClick="servo_center()">
-                        Go Center
+                        Center
                     </button>
                 </div>
 
@@ -72,17 +72,39 @@
                 </div>
                 
                 <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
-                    <button class='btn btn-outline-success' type="button" onClick="servo_up()">
-                        Set Degree
-                    </button>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios1" value="option1" onClick='get_degree(event)' checked>
+                        <label class="form-check-label" for="exampleRadios1">
+                            5&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios2" value="option2" onClick='get_degree(event)'>
+                        <label class="form-check-label" for="exampleRadios2">
+                            10&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios3" value="option3" onClick='get_degree(event)'>
+                        <label class="form-check-label" for="exampleRadios3">
+                            15&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios4" value="option4" onClick='get_degree(event)'>
+                        <label class="form-check-label" for="exampleRadios4">
+                            20&deg;
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
 
-        
-
         <script>
-            function servo_right() {
+            function servo_center() {
                 fetch("/servo/center")
                     .then(response => response.text())
                     .then(data => {
@@ -120,6 +142,11 @@
                     .then(data => {
                         console.log(data);
                     });
+            }
+
+            function get_degree() {
+                var value = event.target.value;
+                console.log(value)
             }
         </script>
     </body>
