@@ -29,7 +29,7 @@
             </div>
         </nav>
 
-        <img  class="img-fluid mx-auto d-block rounded my-3" src="/static/image/porsche.jpg">
+        <img  class="img-fluid mx-auto d-block rounded my-3" src="{{ url_for('video_feed') }}">
 
         <div class="container">
             <div class="row align-items-center justify-content-evenly">
@@ -47,7 +47,7 @@
                             </button>
                         </div>
                     </div>
-
+                    
                     <div class="row">
                         <div class="col">
                             <button class='btn btn-outline-success' type="button" onClick="servo_left()">
@@ -73,29 +73,29 @@
                 
                 <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
                     <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios1" value="option1" onClick='get_degree(event)' checked>
-                        <label class="form-check-label" for="exampleRadios1">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios1" value="5" onClick='set_angle(event)' checked>
+                        <label class="form-check-label" for="degreeRadios1">
                             5&deg;
                         </label>
                     </div>
 
                     <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios2" value="option2" onClick='get_degree(event)'>
-                        <label class="form-check-label" for="exampleRadios2">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios2" value="10" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios2">
                             10&deg;
                         </label>
                     </div>
 
                     <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios3" value="option3" onClick='get_degree(event)'>
-                        <label class="form-check-label" for="exampleRadios3">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios3" value="15" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios3">
                             15&deg;
                         </label>
                     </div>
 
                     <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exampleRadios" id="exampleRadios4" value="option4" onClick='get_degree(event)'>
-                        <label class="form-check-label" for="exampleRadios4">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios4" value="20" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios4">
                             20&deg;
                         </label>
                     </div>
@@ -144,9 +144,20 @@
                     });
             }
 
-            function get_degree() {
-                var value = event.target.value;
-                console.log(value)
+            function set_angle() {
+                fetch("/set/angle", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        angle: event.target.value
+                    })
+                })
+                .then(response => response.text())
+                .then(data => {
+                    console.log(data);
+                });
             }
         </script>
     </body>
