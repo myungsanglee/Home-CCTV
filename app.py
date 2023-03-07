@@ -8,7 +8,7 @@ from pan_tilt import PanTiltServo
 
 app = Flask(__name__)
 app.secret_key = 'secretkey'
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=10)
+# app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=10)
 
 # def gen_frames():
 #     while True:
@@ -18,11 +18,6 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=10)
 #                b'Content-Type: image/jpeg\r\n\r\n' + frame.tobytes() + b'\r\n\r\n')
 
 def valid_login(id, password):
-    login_db = {
-        'michael': 'leeprs0577',
-        'natalia': 'natalia0114',
-    }
-    
     try:
         value = login_db[id]
         if value == password:
@@ -61,17 +56,23 @@ def logout():
     session.pop('id', None)
     return redirect(url_for('login'))
 
-# @app.route('/get_cam')
-# def get_cam():
-#     if 'id' in session:
-#         return render_template('get_cam.html')
-#     else:
-#         flash('Please Login')
-#         return redirect(url_for('login'))
+@app.route('/get_cam')
+def get_cam():
+    if 'id' in session:
+        return render_template('get_cam.html')
+    else:
+        flash('Please Login')
+        return redirect(url_for('login'))
 
 # @app.route('/video_feed')
 # def video_feed():
 #     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# @app.route('/servo/center')
+# def servo_right():
+#     pan_tilt_servo.set_pan_angle(90)
+#     pan_tilt_servo.set_tilt_angle(100)
+#     return 'ok'
 
 # @app.route('/servo/right')
 # def servo_right():
@@ -98,6 +99,11 @@ def logout():
 #     return 'ok'
 
 if __name__ == '__main__':
+    login_db = {
+        'michael': 'leeprs0577',
+        'natalia': 'natalia0114',
+    }
+    
     # picam = VideoGet().start()
     # pan_tilt_servo = PanTiltServo()
     # per_angle = 5

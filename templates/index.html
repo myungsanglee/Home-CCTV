@@ -7,7 +7,10 @@
 
         <!-- Bootstrap core CSS -->
         <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-        <link rel="stylesheet" href="{{ url_for('static', filename='css/index_style.css') }}">
+
+        <!-- Custom CSS -->
+        <link rel="stylesheet" href="/static/css/index_style.css/">
+        
         <title>M&N Home CCTV</title>
     </head>
 
@@ -19,19 +22,15 @@
                 </a>
                 
                 <div class="d-flex justify-content-end">
-                    <button type="button" class="btn btn-outline-light" onClick="location.href='/logout'">Logout</button>
+                    <button class="btn btn-outline-light" type="button" onClick="location.href='/logout'">Logout</button>
                 </div>
             </div>
         </nav>
         
-        <p>
-        
-        <center>
-            <div>
-                <button class="btn btn-dark" type="button" onClick="location.href='/get_cam'">
-                    Show Camera
-                </button>
-            </div>
-        </center>
+        <div class="d-grid gap-2 mx-auto col-10 col-md-6 col-lg-4 col-xl-3">
+            <button class="btn btn-outline-light m-5 py-5" type="button" onClick="location.href='/get_cam'" id='n-btn'>
+                Natalia Home CCTV
+            </button>
+        </div>
     </body>
 </html>
