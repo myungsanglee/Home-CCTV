@@ -106,8 +106,7 @@ def set_angle():
 
 if __name__ == '__main__':
     login_db = {
-        'michael': 'leeprs0577',
-        'natalia': 'natalia0114',
+        'admin': 'admin'
     }
     
     picam = VideoGet().start()
