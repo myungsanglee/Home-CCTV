@@ -3,6 +3,7 @@ from threading import Thread
 
 import cv2
 from picamera2 import Picamera2
+from libcamera import controls
 import numpy as np
 
 
@@ -14,9 +15,10 @@ class VideoGet:
 
     def __init__(self):
         self.picam2 = Picamera2()
-        self.picam2.preview_configuration.main.size = (1080, 720)
+        # self.picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous, "AfSpeed": controls.AfSpeedEnum.Fast})
+        self.picam2.preview_configuration.main.size = (1280, 720)
         self.picam2.preview_configuration.main.format = "RGB888"
-        self.picam2.video_configuration.controls.FrameRate = 60.
+        # self.picam2.video_configuration.controls.FrameRate = 60.
         self.picam2.preview_configuration.align()
         self.picam2.configure("preview")
         self.picam2.start()
@@ -31,7 +33,8 @@ class VideoGet:
     def get(self):
         while not self.stopped:
             self.frame = self.picam2.capture_array()
-        self.frame = np.zeros((720, 1080, 3), np.uint8)
+        self.frame = np.zeros((720, 1280, 3), np.uint8)
+        # self.frame = np.zeros((480, 640, 3), np.uint8)
     
     def stop(self):
         self.stopped = True
@@ -39,9 +42,10 @@ class VideoGet:
 
 def no_threading():
     picam2 = Picamera2()
-    picam2.preview_configuration.main.size = (1080, 720)
+    picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous, "AfSpeed": controls.AfSpeedEnum.Fast})
+    picam2.preview_configuration.main.size = (1280, 720)
     picam2.preview_configuration.main.format = "RGB888"
-    picam2.video_configuration.controls.FrameRate = 60.
+    # picam2.video_configuration.controls.FrameRate = 60.
     picam2.preview_configuration.align()
     picam2.configure("preview")
     picam2.start()
@@ -62,13 +66,15 @@ def no_threading():
         
         cv2.putText(frame, str(int(fps))+' FPS', pos, font, height, myColor, weight)
         cv2.imshow("Camera", frame)
-        if cv2.waitKey(1)==ord('q'):
+        key = cv2.waitKey(1)
+        if key == 27 or key==ord('q'):
             break
         
         tEnd=time.time()
         loopTime=tEnd-tStart
         fps=.9*fps + .1*(1/loopTime)
-        print(f'\rFPS: {fps}', end='')
+        # print(f'\rFPS: {fps}', end='')
+    
     cv2.destroyAllWindows()
     
 
@@ -102,6 +108,6 @@ def thread_video_get():
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    # no_threading()
+    no_threading()
     
-    thread_video_get()
+    # thread_video_get()
