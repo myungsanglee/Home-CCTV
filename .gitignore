@@ -1,0 +1,5 @@
+.env
+servo_state.json
+__pycache__/
+*.pyc
+*.pyo
