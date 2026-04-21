@@ -73,7 +73,14 @@
                 
                 <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
                     <div class="form-check">
-                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios1" value="5" onClick='set_angle(event)' checked>
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios0" value="1" onClick='set_angle(event)'>
+                        <label class="form-check-label" for="degreeRadios0">
+                            1&deg;
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="degreeRadios" id="degreeRadios1" value="5" onClick='set_angle(event)'>
                         <label class="form-check-label" for="degreeRadios1">
                             5&deg;
                         </label>
@@ -144,21 +151,30 @@
                     });
             }
 
-            function set_angle() {
+            function set_angle(event) {
+                const angle = event.target.value;
+                localStorage.setItem('perAngle', angle);
                 fetch("/set/angle", {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        angle: event.target.value
-                    })
+                    body: JSON.stringify({ angle: angle })
                 })
                 .then(response => response.text())
                 .then(data => {
                     console.log(data);
                 });
             }
+
+            const savedAngle = localStorage.getItem('perAngle') || '5';
+            const radio = document.querySelector(`input[name="degreeRadios"][value="${savedAngle}"]`);
+            if (radio) radio.checked = true;
+            fetch("/set/angle", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ angle: savedAngle })
+            });
         </script>
     </body>
 </html>
