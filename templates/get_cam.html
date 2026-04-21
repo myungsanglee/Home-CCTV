@@ -34,9 +34,14 @@
         <div class="container">
             <div class="row align-items-center justify-content-evenly">
                 <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
-                    <button class='btn btn-outline-success' type="button" onClick="servo_center()">
+                    <button class='btn btn-outline-success mb-2' type="button" onClick="servo_center()">
                         Center
                     </button>
+                    <br>
+                    <button class='btn btn-outline-secondary' type="button" id="audioBtn" onClick="toggleAudio()">
+                        <span class="bi bi-volume-mute"></span>
+                    </button>
+                    <audio id="audioPlayer" autoplay playsinline></audio>
                 </div>
 
                 <div class="col-5 col-md-7 col-lg-6 col-xl-5 text-center">
@@ -165,6 +170,66 @@
                 .then(data => {
                     console.log(data);
                 });
+            }
+
+            let pc = null;
+
+            function createSilentWavUrl() {
+                const buf = new ArrayBuffer(44);
+                const v = new DataView(buf);
+                const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+                s(0, 'RIFF'); v.setUint32(4, 36, true);
+                s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true);
+                v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+                v.setUint32(24, 44100, true); v.setUint32(28, 88200, true);
+                v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+                s(36, 'data'); v.setUint32(40, 0, true);
+                return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+            }
+
+            async function toggleAudio() {
+                const btn = document.getElementById('audioBtn');
+                const audio = document.getElementById('audioPlayer');
+                if (pc) {
+                    pc.close(); pc = null;
+                    audio.srcObject = null;
+                    btn.innerHTML = '<span class="bi bi-volume-mute"></span>';
+                    btn.classList.replace('btn-success', 'btn-outline-secondary');
+                    return;
+                }
+
+                // iOS 잠금 해제: 사용자 제스처 안에서 즉시(await 없이) loop 재생으로 element 활성 유지
+                const silentUrl = createSilentWavUrl();
+                audio.src = silentUrl;
+                audio.loop = true;
+                audio.play().catch(() => {});
+
+                pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                pc.ontrack = (event) => {
+                    audio.loop = false;
+                    URL.revokeObjectURL(audio.src);
+                    audio.srcObject = event.streams[0];
+                    audio.play().catch(e => console.warn(e));
+                };
+
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sdp: offer.sdp, type: offer.type })
+                });
+                const answer = await response.json();
+                await pc.setRemoteDescription(answer);
+
+                btn.innerHTML = '<span class="bi bi-volume-up"></span>';
+                btn.classList.replace('btn-outline-secondary', 'btn-success');
             }
 
             const savedAngle = localStorage.getItem('perAngle') || '5';
