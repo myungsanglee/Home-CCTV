@@ -6,8 +6,11 @@ from adafruit_pca9685 import PCA9685
 from board import SCL, SDA
 import busio
 
-MIN_PULSE = 143  # 최소 펄스 길이 (0도, 700μs @ 50Hz)
-MAX_PULSE = 471  # 최대 펄스 길이 (90도, 2300μs @ 50Hz)
+# MIN_PULSE = 143  # 최소 펄스 길이 (0도, 700μs @ 50Hz, 143 = 700 * 4096 / 20000)
+# MAX_PULSE = 471  # 최대 펄스 길이 (90도, 2300μs @ 50Hz, 471 = 2300 * 4096 / 20000)
+
+MIN_PULSE = 123  # 최소 펄스 길이 (0도, 600μs @ 50Hz, 123 = 700 * 4096 / 20000)
+MAX_PULSE = 492  # 최대 펄스 길이 (90도, 2400μs @ 50Hz, 492 = 2300 * 4096 / 20000)
 
 DEFAULT_TILT = 45
 DEFAULT_PAN = 45
