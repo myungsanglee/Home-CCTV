@@ -1,3 +1,53 @@
 nav {
     background-color: #134f2c;
 }
+
+
+#camTabs .nav-link {
+    color: #134f2c;
+}
+
+#camTabs .nav-link.active {
+    background-color: #134f2c;
+    color: #fff;
+}
+
+/* 버튼을 빠르게 연속으로 눌러도 iOS가 화면을 더블탭 확대하지 않게 함 (핀치 확대는 유지) */
+body, button, input, label {
+    touch-action: manipulation;
+}
+
+.video-wrap {
+    width: fit-content;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    overflow: hidden;
+    /* 한 손가락 페이지 스크롤은 허용, 두 손가락 화면 확대는 영상 확대로 대신 처리 */
+    touch-action: pan-x pan-y;
+}
+
+.video-wrap img {
+    transform-origin: 0 0;
+    transition: transform 0.2s ease;
+    cursor: zoom-in;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
+}
+
+/* 확대 중에는 브라우저 스크롤/확대 대신 영상 끌기로 동작 */
+.video-wrap.zoomed {
+    touch-action: none;
+}
+
+.video-wrap.zoomed img {
+    cursor: grab;
+}
+
+/* 끌고 있는 동안에는 애니메이션 없이 손가락을 바로 따라감 */
+.video-wrap.dragging img {
+    transition: none;
+    cursor: grabbing;
+}

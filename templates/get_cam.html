@@ -29,7 +29,20 @@
             </div>
         </nav>
 
-        <img  class="img-fluid mx-auto d-block rounded my-3" src="{{ url_for('video_feed') }}">
+        {% if tapo_enabled %}
+        <ul class="nav nav-pills justify-content-center mt-3" id="camTabs">
+            <li class="nav-item">
+                <button class="nav-link" type="button" data-cam="pi" onClick="setCam('pi')">Pi 카메라</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" type="button" data-cam="tapo" onClick="setCam('tapo')">Tapo</button>
+            </li>
+        </ul>
+        {% endif %}
+
+        <div class="video-wrap rounded my-3" id="videoWrap">
+            <img class="img-fluid d-block" id="videoFeed" src="{{ url_for('video_feed') }}">
+        </div>
 
         <div class="container">
             <div class="row align-items-center justify-content-evenly">
@@ -116,8 +129,181 @@
         </div>
 
         <script>
+            const VIDEO_FEEDS = { pi: "{{ url_for('video_feed') }}", tapo: "{{ url_for('video_feed_tapo') }}" };
+            const TAPO_ENABLED = {{ 'true' if tapo_enabled else 'false' }};
+            let currentCam = 'pi';
+
+            function setCam(cam) {
+                if (cam === 'tapo' && !TAPO_ENABLED) cam = 'pi';
+                currentCam = cam;
+                localStorage.setItem('cam', cam);
+                resetZoom();
+                document.getElementById('videoFeed').src = VIDEO_FEEDS[cam];
+                document.querySelectorAll('#camTabs .nav-link').forEach(tab => {
+                    tab.classList.toggle('active', tab.dataset.cam === cam);
+                });
+            }
+
+            // 영상 확대: 더블탭(모바일)/더블클릭(PC)으로 2배 확대 또는 원래대로, 두 손가락으로 1~4배 자유 확대
+            // 확대된 상태에서는 손가락(또는 마우스)으로 끌어서 영상 이곳저곳을 볼 수 있음
+            const DOUBLE_TAP_ZOOM = 2;
+            const MAX_ZOOM = 4;
+            const videoWrap = document.getElementById('videoWrap');
+            const videoImg = document.getElementById('videoFeed');
+            const zoom = { scale: 1, tx: 0, ty: 0 };
+
+            function applyZoom() {
+                const s = zoom.scale;
+                // 영상 가장자리 밖으로 끌려 나가지 않도록 이동 범위 제한
+                zoom.tx = Math.min(0, Math.max(videoWrap.clientWidth * (1 - s), zoom.tx));
+                zoom.ty = Math.min(0, Math.max(videoWrap.clientHeight * (1 - s), zoom.ty));
+                videoImg.style.transform = s > 1 ? `translate(${zoom.tx}px, ${zoom.ty}px) scale(${s})` : '';
+                videoWrap.classList.toggle('zoomed', s > 1);
+            }
+
+            // (clientX, clientY) 아래에 있던 영상 지점이 그대로 그 자리에 머물도록 배율 변경
+            function zoomAt(clientX, clientY, newScale, from = zoom) {
+                const rect = videoWrap.getBoundingClientRect();
+                const px = clientX - rect.left, py = clientY - rect.top;
+                const s = Math.min(MAX_ZOOM, Math.max(1, newScale));
+                zoom.tx = px - (px - from.tx) / from.scale * s;
+                zoom.ty = py - (py - from.ty) / from.scale * s;
+                zoom.scale = s;
+                applyZoom();
+            }
+
+            function toggleZoom(clientX, clientY) {
+                if (zoom.scale > 1) resetZoom();
+                else zoomAt(clientX, clientY, DOUBLE_TAP_ZOOM);
+            }
+
+            function resetZoom() {
+                zoom.scale = 1;
+                zoom.tx = 0;
+                zoom.ty = 0;
+                applyZoom();
+            }
+
+            let drag = null;
+            let pinch = null;
+            let lastTap = null;
+
+            function dragStart(x, y) {
+                drag = { x, y, tx: zoom.tx, ty: zoom.ty, moved: false };
+                if (zoom.scale > 1) videoWrap.classList.add('dragging');
+            }
+
+            function dragMove(x, y) {
+                if (!drag) return;
+                const dx = x - drag.x, dy = y - drag.y;
+                if (Math.abs(dx) > 5 || Math.abs(dy) > 5) drag.moved = true;
+                if (zoom.scale <= 1) return;
+                zoom.tx = drag.tx + dx;
+                zoom.ty = drag.ty + dy;
+                applyZoom();
+            }
+
+            function dragEnd() {
+                const moved = drag !== null && drag.moved;
+                drag = null;
+                videoWrap.classList.remove('dragging');
+                return moved;
+            }
+
+            function touchInfo(touches) {
+                const [a, b] = touches;
+                return {
+                    dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+                    x: (a.clientX + b.clientX) / 2,
+                    y: (a.clientY + b.clientY) / 2,
+                };
+            }
+
+            videoWrap.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    // 두 손가락: 확대 시작 (끌기/더블탭은 취소)
+                    drag = null;
+                    lastTap = null;
+                    pinch = { ...touchInfo(e.touches), scale: zoom.scale, tx: zoom.tx, ty: zoom.ty };
+                    videoWrap.classList.add('dragging');
+                } else if (e.touches.length === 1) {
+                    dragStart(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: true });
+
+            videoWrap.addEventListener('touchmove', (e) => {
+                if (pinch && e.touches.length === 2) {
+                    e.preventDefault();  // 브라우저 화면 확대 대신 영상만 확대
+                    const now = touchInfo(e.touches);
+                    // 시작할 때 손가락 사이에 있던 영상 지점이 현재 손가락 사이를 따라오도록 계산
+                    const rect = videoWrap.getBoundingClientRect();
+                    const s = Math.min(MAX_ZOOM, Math.max(1, pinch.scale * now.dist / pinch.dist));
+                    const cx = (pinch.x - rect.left - pinch.tx) / pinch.scale;
+                    const cy = (pinch.y - rect.top - pinch.ty) / pinch.scale;
+                    zoom.scale = s;
+                    zoom.tx = now.x - rect.left - cx * s;
+                    zoom.ty = now.y - rect.top - cy * s;
+                    applyZoom();
+                    return;
+                }
+                if (!drag || e.touches.length !== 1) return;
+                if (zoom.scale > 1) e.preventDefault();  // 확대 중에는 페이지 스크롤 대신 영상 이동
+                dragMove(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: false });
+
+            videoWrap.addEventListener('touchend', (e) => {
+                if (pinch) {
+                    if (e.touches.length === 1) {
+                        // 한 손가락만 떼면 남은 손가락으로 이어서 끌기
+                        pinch = null;
+                        dragStart(e.touches[0].clientX, e.touches[0].clientY);
+                        drag.moved = true;
+                    } else if (e.touches.length === 0) {
+                        pinch = null;
+                        videoWrap.classList.remove('dragging');
+                    }
+                    lastTap = null;
+                    return;
+                }
+                const moved = dragEnd();
+                if (moved || e.changedTouches.length !== 1 || e.touches.length > 0) {
+                    lastTap = null;
+                    return;
+                }
+                const t = e.changedTouches[0];
+                const now = Date.now();
+                if (lastTap && now - lastTap.time < 300 &&
+                    Math.abs(t.clientX - lastTap.x) < 30 && Math.abs(t.clientY - lastTap.y) < 30) {
+                    e.preventDefault();
+                    toggleZoom(t.clientX, t.clientY);
+                    lastTap = null;
+                } else {
+                    lastTap = { time: now, x: t.clientX, y: t.clientY };
+                }
+            });
+
+            videoWrap.addEventListener('touchcancel', () => {
+                pinch = null;
+                dragEnd();
+                lastTap = null;
+            });
+
+            // iOS(사파리/크롬)의 화면 확대 제스처가 영상 위에서 동작하지 않도록 막음
+            ['gesturestart', 'gesturechange', 'gestureend'].forEach(type =>
+                videoWrap.addEventListener(type, (e) => e.preventDefault()));
+
+            videoWrap.addEventListener('mousedown', (e) => {
+                if (zoom.scale <= 1) return;
+                e.preventDefault();
+                dragStart(e.clientX, e.clientY);
+            });
+            window.addEventListener('mousemove', (e) => dragMove(e.clientX, e.clientY));
+            window.addEventListener('mouseup', () => dragEnd());
+            window.addEventListener('resize', applyZoom);
+            videoWrap.addEventListener('dblclick', (e) => toggleZoom(e.clientX, e.clientY));
+
             function servo_center() {
-                fetch("/servo/center")
+                fetch(`/servo/center?cam=${currentCam}`)
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);
@@ -125,7 +311,7 @@
             }
 
             function servo_right() {
-                fetch("/servo/right")
+                fetch(`/servo/right?cam=${currentCam}`)
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);
@@ -133,7 +319,7 @@
             }
 
             function servo_left() {
-                fetch("/servo/left")
+                fetch(`/servo/left?cam=${currentCam}`)
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);
@@ -141,7 +327,7 @@
             }
 
             function servo_up() {
-                fetch("/servo/up")
+                fetch(`/servo/up?cam=${currentCam}`)
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);
@@ -149,7 +335,7 @@
             }
 
             function servo_down() {
-                fetch("/servo/down")
+                fetch(`/servo/down?cam=${currentCam}`)
                     .then(response => response.text())
                     .then(data => {
                         console.log(data);
@@ -231,6 +417,8 @@
                 btn.innerHTML = '<span class="bi bi-volume-up"></span>';
                 btn.classList.replace('btn-outline-secondary', 'btn-success');
             }
+
+            setCam(localStorage.getItem('cam') || 'pi');
 
             const savedAngle = localStorage.getItem('perAngle') || '5';
             const radio = document.querySelector(`input[name="degreeRadios"][value="${savedAngle}"]`);

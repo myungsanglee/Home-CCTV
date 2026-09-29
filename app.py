@@ -2,6 +2,7 @@ import asyncio
 import fractions
 import os
 import threading
+import time
 from datetime import timedelta
 
 import av
@@ -13,6 +14,7 @@ from flask import Flask, jsonify, render_template, Response, request, redirect, 
 
 from picam import VideoGet
 from pan_tilt import PanTiltServo
+from tapo import TapoCamera
 
 load_dotenv()
 
@@ -20,9 +22,9 @@ app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=1)
 
-AUDIO_DEVICE = 1   # sounddevice index: USB PnP Sound Device (hw:3,0)
+AUDIO_DEVICE = 1  # sounddevice index: USB PnP Sound Device (hw:3,0)
 SAMPLE_RATE = 48000
-CHUNK_SIZE = 960   # 20ms @ 48kHz
+CHUNK_SIZE = 960  # 20ms @ 48kHz
 
 webrtc_loop = asyncio.new_event_loop()
 threading.Thread(target=webrtc_loop.run_forever, daemon=True).start()
@@ -66,16 +68,27 @@ class MicrophoneTrack(AudioStreamTrack):
         super().stop()
 
 
-def gen_frames():
+def gen_frames(camera):
     while True:
         try:
-            frame = picam.frame
+            frame = camera.frame
             success, frame = cv2.imencode(".jpg", frame)
             if not success:
                 continue
             yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame.tobytes() + b"\r\n\r\n")
+            time.sleep(0.03)  # 최대 약 30fps로 제한 (같은 프레임 반복 인코딩 방지)
         except Exception:
             continue
+
+
+def tapo_ptz(method, *args):
+    if tapo is None:
+        return "tapo not configured", 503
+    try:
+        getattr(tapo, method)(*args)
+    except Exception as e:
+        return f"tapo error: {e}", 502
+    return "ok"
 
 
 def valid_login(id, password):
@@ -104,7 +117,6 @@ def login():
     if request.method == "POST":
         id = request.form["id"]
         password = request.form["password"]
-        print(f"ID: {id}, Password: {password}")
         if valid_login(id, password):
             session.permanent = True
             session["id"] = id
@@ -124,7 +136,7 @@ def logout():
 @app.route("/get_cam")
 def get_cam():
     if "id" in session:
-        return render_template("get_cam.html")
+        return render_template("get_cam.html", tapo_enabled=tapo is not None)
     else:
         flash("Please Login")
         return redirect(url_for("login"))
@@ -134,7 +146,16 @@ def get_cam():
 def video_feed():
     if "id" not in session:
         return redirect(url_for("login"))
-    return Response(gen_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(gen_frames(picam), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/video_feed/tapo")
+def video_feed_tapo():
+    if "id" not in session:
+        return redirect(url_for("login"))
+    if tapo is None:
+        return "tapo not configured", 503
+    return Response(gen_frames(tapo), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/offer", methods=["POST"])
@@ -175,6 +196,8 @@ def offer():
 
 @app.route("/servo/center")
 def servo_center():
+    if request.args.get("cam") == "tapo":
+        return tapo_ptz("center")
     pan_tilt_servo.set_pan_angle(45)
     pan_tilt_servo.set_tilt_angle(45)
     return "ok"
@@ -182,6 +205,8 @@ def servo_center():
 
 @app.route("/servo/right")
 def servo_right():
+    if request.args.get("cam") == "tapo":
+        return tapo_ptz("move", "right", per_angle)
     angle = min(90, pan_tilt_servo.get_pan_angle() + per_angle)
     pan_tilt_servo.set_pan_angle(angle)
     return "ok"
@@ -189,6 +214,8 @@ def servo_right():
 
 @app.route("/servo/left")
 def servo_left():
+    if request.args.get("cam") == "tapo":
+        return tapo_ptz("move", "left", per_angle)
     angle = max(0, pan_tilt_servo.get_pan_angle() - per_angle)
     pan_tilt_servo.set_pan_angle(angle)
     return "ok"
@@ -196,6 +223,8 @@ def servo_left():
 
 @app.route("/servo/up")
 def servo_up():
+    if request.args.get("cam") == "tapo":
+        return tapo_ptz("move", "up", per_angle)
     angle = min(90, pan_tilt_servo.get_tilt_angle() + per_angle)
     pan_tilt_servo.set_tilt_angle(angle)
     return "ok"
@@ -203,6 +232,8 @@ def servo_up():
 
 @app.route("/servo/down")
 def servo_down():
+    if request.args.get("cam") == "tapo":
+        return tapo_ptz("move", "down", per_angle)
     angle = max(0, pan_tilt_servo.get_tilt_angle() - per_angle)
     pan_tilt_servo.set_tilt_angle(angle)
     return "ok"
@@ -223,6 +254,9 @@ if __name__ == "__main__":
     }
 
     picam = VideoGet().start()
+    tapo = None
+    if os.environ.get("TAPO_IP") and os.environ.get("TAPO_USER"):
+        tapo = TapoCamera(os.environ["TAPO_IP"], os.environ["TAPO_USER"], os.environ["TAPO_PASSWORD"]).start()
     pan_tilt_servo = PanTiltServo()
     per_angle = 5
 
