@@ -10,10 +10,11 @@ from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, Response, request, redirect, url_for, session, flash
 
+from audio import AudioFanout
 from mjpeg import MjpegStream
 from picam import VideoGet
 from pan_tilt import PanTiltServo
-from tapo import TapoCamera
+from tapo import TapoAudio, TapoCamera
 
 load_dotenv()
 
@@ -29,27 +30,26 @@ webrtc_loop = asyncio.new_event_loop()
 threading.Thread(target=webrtc_loop.run_forever, daemon=True).start()
 pcs = set()
 
-# 전역 오디오 스트림 - 서버 시작 시 한 번만 열고 유지
-_audio_queues = set()
-_audio_queues_lock = threading.Lock()
+# Pi USB 마이크 - 서버 시작 시 한 번만 열고 유지
+pi_audio = AudioFanout()
 
 
-def _global_audio_callback(indata, frames, time_info, status):
-    data = indata.copy()
-    with _audio_queues_lock:
-        for q in list(_audio_queues):
-            asyncio.run_coroutine_threadsafe(q.put(data), webrtc_loop)
+def _pi_audio_callback(indata, frames, time_info, status):
+    pi_audio.dispatch(indata.copy())
 
 
 class MicrophoneTrack(AudioStreamTrack):
     kind = "audio"
 
-    def __init__(self):
+    def __init__(self, source):
         super().__init__()
         self._queue = asyncio.Queue()
         self._pts = 0
-        with _audio_queues_lock:
-            _audio_queues.add(self._queue)
+        self._source = source
+        source.add_listener(self._on_audio)
+
+    def _on_audio(self, data):
+        asyncio.run_coroutine_threadsafe(self._queue.put(data), webrtc_loop)
 
     async def recv(self):
         data = await self._queue.get()
@@ -62,8 +62,7 @@ class MicrophoneTrack(AudioStreamTrack):
         return frame
 
     def stop(self):
-        with _audio_queues_lock:
-            _audio_queues.discard(self._queue)
+        self._source.remove_listener(self._on_audio)
         super().stop()
 
 
@@ -153,7 +152,8 @@ def offer():
 
     async def process():
         pc = RTCPeerConnection()
-        mic = MicrophoneTrack()
+        source = tapo_audio if params.get("cam") == "tapo" and tapo_audio else pi_audio
+        mic = MicrophoneTrack(source)
         pcs.add(pc)
 
         @pc.on("connectionstatechange")
@@ -245,6 +245,7 @@ if __name__ == "__main__":
         tapo = TapoCamera(os.environ["TAPO_IP"], os.environ["TAPO_USER"], os.environ["TAPO_PASSWORD"]).start()
     pi_stream = MjpegStream(picam)
     tapo_stream = MjpegStream(tapo) if tapo else None
+    tapo_audio = TapoAudio(tapo.rtsp_url) if tapo else None
     pan_tilt_servo = PanTiltServo()
     per_angle = 5
 
@@ -254,7 +255,7 @@ if __name__ == "__main__":
         samplerate=SAMPLE_RATE,
         dtype="int16",
         blocksize=CHUNK_SIZE,
-        callback=_global_audio_callback,
+        callback=_pi_audio_callback,
     )
     global_audio_stream.start()
 

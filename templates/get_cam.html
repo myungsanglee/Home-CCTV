@@ -139,6 +139,11 @@
                 localStorage.setItem('cam', cam);
                 resetZoom();
                 document.getElementById('videoFeed').src = VIDEO_FEEDS[cam];
+                // 소리를 듣는 중이면 새 카메라의 마이크로 다시 연결
+                if (pc) {
+                    toggleAudio();
+                    toggleAudio();
+                }
                 document.querySelectorAll('#camTabs .nav-link').forEach(tab => {
                     tab.classList.toggle('active', tab.dataset.cam === cam);
                 });
@@ -409,7 +414,7 @@
                 const response = await fetch('/offer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sdp: offer.sdp, type: offer.type })
+                    body: JSON.stringify({ sdp: offer.sdp, type: offer.type, cam: currentCam })
                 });
                 const answer = await response.json();
                 await pc.setRemoteDescription(answer);

@@ -3,9 +3,12 @@ import time
 from threading import Thread, Lock
 from urllib.parse import quote
 
+import av
 import cv2
 import numpy as np
 from onvif import ONVIFCamera
+
+from audio import AudioFanout
 
 WSDL_DIR = os.environ.get("ONVIF_WSDL_DIR", "/home/michael/.local/lib/python3.4/site-packages/wsdl")
 ONVIF_PORT = 2020
@@ -105,3 +108,52 @@ class TapoCamera:
 
     def center(self):
         self._call_ptz("AbsoluteMove", {"Position": {"PanTilt": {"x": 0.0, "y": 0.0}}})
+
+
+class TapoAudio(AudioFanout):
+    """Tapo 마이크 소리: 듣는 사람이 있을 때만 RTSP에서 오디오만 받아와서
+    (8kHz G.711 -> 48kHz) 960샘플 조각으로 나눠 보냄. 영상은 디코딩하지 않음"""
+
+    def __init__(self, rtsp_url, sample_rate=48000, chunk_size=960):
+        super().__init__()
+        self.rtsp_url = rtsp_url
+        self.sample_rate = sample_rate
+        self.chunk_size = chunk_size
+        self._thread = None
+        self._thread_lock = Lock()
+
+    def _on_first_listener(self):
+        with self._thread_lock:
+            if self._thread is None:
+                self._thread = Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+    def _run(self):
+        while True:
+            with self._thread_lock:
+                if not self.has_listeners():
+                    self._thread = None
+                    return
+            try:
+                container = av.open(self.rtsp_url, options={"rtsp_transport": "tcp"}, timeout=10)
+            except Exception:
+                time.sleep(3)
+                continue
+            try:
+                stream = container.streams.audio[0]
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
+                buf = np.zeros(0, np.int16)
+                for packet in container.demux(stream):
+                    if not self.has_listeners():
+                        break
+                    for frame in packet.decode():
+                        for out in resampler.resample(frame):
+                            buf = np.concatenate([buf, out.to_ndarray().reshape(-1)])
+                    while len(buf) >= self.chunk_size:
+                        self.dispatch(buf[:self.chunk_size].reshape(-1, 1).copy())
+                        buf = buf[self.chunk_size:]
+            except Exception:
+                # 연결이 끊기면 잠시 후 다시 연결
+                time.sleep(3)
+            finally:
+                container.close()
