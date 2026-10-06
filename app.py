@@ -3,6 +3,7 @@ import fractions
 import os
 import threading
 from datetime import timedelta
+from functools import wraps
 
 import av
 import sounddevice as sd
@@ -64,6 +65,16 @@ class MicrophoneTrack(AudioStreamTrack):
     def stop(self):
         self._source.remove_listener(self._on_audio)
         super().stop()
+
+
+def api_login_required(view):
+    """버튼에서 보내는 요청용: 로그인하지 않았으면 로그인 화면 대신 401로 거절"""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if "id" not in session:
+            return "unauthorized", 401
+        return view(*args, **kwargs)
+    return wrapper
 
 
 def tapo_ptz(method, *args):
@@ -181,6 +192,7 @@ def offer():
 
 
 @app.route("/servo/center")
+@api_login_required
 def servo_center():
     if request.args.get("cam") == "tapo":
         return tapo_ptz("center")
@@ -190,6 +202,7 @@ def servo_center():
 
 
 @app.route("/servo/right")
+@api_login_required
 def servo_right():
     if request.args.get("cam") == "tapo":
         return tapo_ptz("move", "right", per_angle)
@@ -199,6 +212,7 @@ def servo_right():
 
 
 @app.route("/servo/left")
+@api_login_required
 def servo_left():
     if request.args.get("cam") == "tapo":
         return tapo_ptz("move", "left", per_angle)
@@ -208,6 +222,7 @@ def servo_left():
 
 
 @app.route("/servo/up")
+@api_login_required
 def servo_up():
     if request.args.get("cam") == "tapo":
         return tapo_ptz("move", "up", per_angle)
@@ -217,6 +232,7 @@ def servo_up():
 
 
 @app.route("/servo/down")
+@api_login_required
 def servo_down():
     if request.args.get("cam") == "tapo":
         return tapo_ptz("move", "down", per_angle)
@@ -226,6 +242,7 @@ def servo_down():
 
 
 @app.route("/set/angle", methods=["POST"])
+@api_login_required
 def set_angle():
     global per_angle
     angle = request.json["angle"]
@@ -259,4 +276,6 @@ if __name__ == "__main__":
     )
     global_audio_stream.start()
 
-    app.run(host="0.0.0.0", port="5000", debug=False, threaded=True)
+    # Tailscale HTTPS(tailscale serve)를 거친 요청만 받도록 라즈베리파이 내부에서만 열어둠
+    # 접속 주소: https://raspberrypi.tailae04df.ts.net
+    app.run(host="127.0.0.1", port="5000", debug=False, threaded=True)
