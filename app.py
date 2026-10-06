@@ -1,6 +1,7 @@
 import asyncio
 import fractions
 import os
+import signal
 import threading
 from datetime import timedelta
 from functools import wraps
@@ -9,12 +10,13 @@ import av
 import sounddevice as sd
 from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, Response, request, redirect, url_for, session, flash
+from flask import Flask, abort, jsonify, render_template, Response, request, redirect, url_for, session, flash, send_file
 
 from audio import AudioFanout
 from mjpeg import MjpegStream
 from picam import VideoGet
 from pan_tilt import PanTiltServo
+from recorder import CAMERAS, PiRecorder, RecordingCleaner, TapoRecorder, list_recordings, recording_path, stop_all
 from tapo import TapoAudio, TapoCamera
 
 load_dotenv()
@@ -136,6 +138,34 @@ def get_cam():
     else:
         flash("Please Login")
         return redirect(url_for("login"))
+
+
+@app.route("/recordings")
+def recordings():
+    if "id" not in session:
+        flash("Please Login")
+        return redirect(url_for("login"))
+    return render_template("recordings.html", tapo_enabled=tapo is not None)
+
+
+@app.route("/recordings/list")
+@api_login_required
+def recordings_list():
+    cam = request.args.get("cam", "pi")
+    if cam not in CAMERAS:
+        abort(404)
+    return jsonify(list_recordings(cam))
+
+
+@app.route("/recordings/file/<cam>/<name>")
+@api_login_required
+def recordings_file(cam, name):
+    path = recording_path(cam, name)
+    if path is None:
+        abort(404)
+    # conditional=True: 영상 중간으로 넘기기(Range 요청) 지원
+    return send_file(path, mimetype="video/mp4", conditional=True,
+                     as_attachment=request.args.get("download") == "1", download_name=f"{cam}_{name}")
 
 
 @app.route("/video_feed")
@@ -275,6 +305,20 @@ if __name__ == "__main__":
         callback=_pi_audio_callback,
     )
     global_audio_stream.start()
+
+    # 24시간 녹화 (USB /mnt/cctv), 3일 보관
+    PiRecorder(picam, pi_audio).start()
+    if tapo:
+        TapoRecorder(tapo.record_url).start()
+    RecordingCleaner().start()
+
+    def _shutdown(signum, frame):
+        # 서비스 종료/재시작 시 녹화 파일을 제대로 닫은 다음 끝냄
+        stop_all()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
 
     # Tailscale HTTPS(tailscale serve)를 거친 요청만 받도록 라즈베리파이 내부에서만 열어둠
     # 접속 주소: https://raspberrypi.tailae04df.ts.net

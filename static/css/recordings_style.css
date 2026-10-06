@@ -1,0 +1,22 @@
+#player {
+    max-height: 70vh;
+}
+
+/* 한 줄 = 한 시간, 버튼 = 10분 영상 */
+.clip-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.clip-hour {
+    width: 2.5rem;
+    color: #134f2c;
+    font-weight: 600;
+}
+
+.clip-btn {
+    min-width: 3.5rem;
+}

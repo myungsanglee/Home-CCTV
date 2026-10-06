@@ -13,7 +13,8 @@ from audio import AudioFanout
 WSDL_DIR = os.environ.get("ONVIF_WSDL_DIR", "/home/michael/.local/lib/python3.4/site-packages/wsdl")
 ONVIF_PORT = 2020
 RTSP_PORT = 554
-STREAM = "stream2"  # 1280x720 (stream1은 2304x1296)
+STREAM = "stream2"  # 실시간 화면용 1280x720
+RECORD_STREAM = "stream1"  # 녹화용 2304x1296
 
 # ONVIF 좌표(-1 ~ 1)를 각도로 변환하기 위한 C210 스펙 (좌우 360도, 상하 114도)
 PAN_DEG_PER_UNIT = 360.0 / 2.0
@@ -35,7 +36,8 @@ class TapoCamera:
         self.ip = ip
         self.user = user
         self.password = password
-        self.rtsp_url = f"rtsp://{quote(user, safe='')}:{quote(password, safe='')}@{ip}:{RTSP_PORT}/{STREAM}"
+        self.rtsp_url = self.stream_url(STREAM)
+        self.record_url = self.stream_url(RECORD_STREAM)
 
         self._frame = self._placeholder("Connecting to Tapo...")
         self._lock = Lock()
@@ -43,6 +45,9 @@ class TapoCamera:
         self._ptz = None
         self._token = None
         self.stopped = False
+
+    def stream_url(self, stream):
+        return f"rtsp://{quote(self.user, safe='')}:{quote(self.password, safe='')}@{self.ip}:{RTSP_PORT}/{stream}"
 
     @staticmethod
     def _placeholder(text):

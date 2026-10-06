@@ -17,11 +17,14 @@ Raspberry Pi 4를 이용하여 Pan/Tilt가 가능한 Home CCTV Project
  * 실시간 소리 듣기 (WebRTC): Pi 탭은 USB 마이크, Tapo 탭은 Tapo 카메라 마이크
  * 영상 확대: 더블탭/더블클릭 2배, 두 손가락 1~4배, 확대 중 끌어서 이동
  * 현재 화면 저장 (모바일은 공유 창의 "이미지 저장", PC는 다운로드)
+ * 24시간 녹화 (USB 저장, 10분 단위 MP4, 3일 보관)
+   * Pi 카메라: 하드웨어 H.264 1280x720 + USB 마이크 소리
+   * Tapo: 고화질 2304x1296 원본 그대로 + 카메라 마이크 소리
+   * 웹에서 날짜/시간별로 골라 보기, 이어서 재생, 다운로드
  * 로그인/로그아웃 (카메라 제어 요청도 로그인 필요)
  * Tailscale HTTPS로만 접속 가능
 
 ## TODOs
-- [ ] 영상 녹화 / 웹에서 다시보기
 - [ ] Motion Detection
 - [ ] Object Tracking
 - [ ] Object Detection
@@ -32,6 +35,7 @@ Raspberry Pi 4를 이용하여 Pan/Tilt가 가능한 Home CCTV Project
 * USB 마이크
 * Tapo C210 (선택, 카메라 계정 생성 필요)
 * Tailscale
+* 녹화용 USB 저장장치 (ext4, `/mnt/cctv`에 연결)
 
 ## 설치
 ```bash
@@ -47,6 +51,12 @@ sudo raspi-config
 
 `onvif-zeep`는 WSDL 파일을 `~/.local/lib/python3.4/site-packages/wsdl`에 설치함 (`tapo.py`의 기본 경로).
 다른 곳에 있으면 환경 변수 `ONVIF_WSDL_DIR`로 지정.
+
+녹화용 USB는 ext4로 포맷하고 `/etc/fstab`에 등록 (빠져 있어도 부팅되도록 `nofail`):
+```
+UUID=<USB 파티션 UUID>  /mnt/cctv  ext4  defaults,noatime,nofail,x-systemd.device-timeout=10s  0  2
+```
+녹화 파일은 `/mnt/cctv/recordings/{pi,tapo}/`에 저장되고, USB가 연결돼 있지 않으면 녹화하지 않음.
 
 USB 마이크 장치 번호는 `app.py`의 `AUDIO_DEVICE`로 지정 (`python -c "import sounddevice as sd; print(sd.query_devices())"`로 확인).
 
@@ -87,6 +97,10 @@ WorkingDirectory=/home/michael/project/Home-CCTV
 ExecStart=/usr/bin/python -u /home/michael/project/Home-CCTV/app.py
 Restart=always
 RestartSec=5
+
+# 종료 신호는 앱에만 보내고, 앱이 녹화 파일을 닫은 뒤 ffmpeg를 정리함
+KillMode=mixed
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
