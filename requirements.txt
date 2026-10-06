@@ -1,0 +1,8 @@
+# pip로 설치하는 패키지 (라즈베리파이 OS 시스템 패키지는 README의 "설치" 참고)
+# pip install -r requirements.txt --break-system-packages
+adafruit-circuitpython-pca9685==3.4.16
+Adafruit-Blinka==8.50.0
+aiortc==1.14.0
+av==16.1.0
+sounddevice==0.5.5
+onvif-zeep==0.2.12
