@@ -21,11 +21,13 @@ Raspberry Pi 4를 이용하여 Pan/Tilt가 가능한 Home CCTV Project
    * Pi 카메라: 하드웨어 H.264 1280x720 + USB 마이크 소리
    * Tapo: 고화질 2304x1296 원본 그대로 + 카메라 마이크 소리
    * 웹에서 날짜/시간별로 골라 보기, 이어서 재생, 다운로드
+ * 움직임 감지: 움직임이 있었던 10분 구간을 녹화 목록에 표시, "움직임 구간만" 보기
+   * Pi 카메라: 작은 화면(320x180) 프레임 비교, 초당 3번
+   * Tapo: 카메라 자체 감지 알림(ONVIF 이벤트) 사용 (Tapo 앱에서 움직임 감지를 켜야 함)
  * 로그인/로그아웃 (카메라 제어 요청도 로그인 필요)
  * Tailscale HTTPS로만 접속 가능
 
 ## TODOs
-- [ ] Motion Detection
 - [ ] Object Tracking
 - [ ] Object Detection
 

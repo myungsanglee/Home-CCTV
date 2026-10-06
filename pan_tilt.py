@@ -34,6 +34,7 @@ class PanTiltServo:
             self.tilt_angle = DEFAULT_TILT
             self.pan_angle = DEFAULT_PAN
         self._save_timer = None
+        self.last_move = 0.0  # 마지막으로 서보를 움직인 시각 (움직임 감지에서 사용)
         self.set_tilt_angle(self.tilt_angle)
         self.set_pan_angle(self.pan_angle)
 
@@ -63,6 +64,7 @@ class PanTiltServo:
         pulse = MIN_PULSE + (angle / 90.0) * (MAX_PULSE - MIN_PULSE)
         duty_cycle = int((pulse / 4096.0) * 0xFFFF)
         self.pca.channels[0].duty_cycle = duty_cycle
+        self.last_move = time.time()
         time.sleep(0.03)
         self.tilt_angle = angle
         self._schedule_save()
@@ -74,6 +76,7 @@ class PanTiltServo:
         pulse = MIN_PULSE + (angle / 90.0) * (MAX_PULSE - MIN_PULSE)
         duty_cycle = int((pulse / 4096.0) * 0xFFFF)
         self.pca.channels[1].duty_cycle = duty_cycle
+        self.last_move = time.time()
         time.sleep(0.03)
         self.pan_angle = angle
         self._schedule_save()

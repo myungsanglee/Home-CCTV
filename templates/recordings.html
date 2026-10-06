@@ -58,7 +58,17 @@
                 </button>
             </div>
 
-            <div id="clips" class="mt-3"></div>
+            <div class="d-flex align-items-center justify-content-between mt-3">
+                <small class="text-muted">
+                    <span class="legend-motion"></span> 움직임 있음
+                </small>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" id="motionOnly" onChange="onMotionOnly(event)">
+                    <label class="form-check-label" for="motionOnly">움직임 구간만</label>
+                </div>
+            </div>
+
+            <div id="clips" class="mt-2"></div>
         </div>
 
         <script>
@@ -70,6 +80,14 @@
             let clips = [];      // 녹화가 끝난 10분 단위 영상, 오래된 순
             let selectedDay = null;
             let playingIndex = -1;
+            let motionOnly = localStorage.getItem('recMotionOnly') === '1';
+            document.getElementById('motionOnly').checked = motionOnly;
+
+            function onMotionOnly(event) {
+                motionOnly = event.target.checked;
+                localStorage.setItem('recMotionOnly', motionOnly ? '1' : '0');
+                renderClips();
+            }
 
             function setCam(cam) {
                 if (cam === 'tapo' && !TAPO_ENABLED) cam = 'pi';
@@ -124,6 +142,7 @@
                 const hours = {};
                 clips.forEach((c, i) => {
                     if (c.start.slice(0, 10) !== selectedDay) return;
+                    if (motionOnly && !c.motion && i !== playingIndex) return;
                     const hour = c.start.slice(11, 13);
                     (hours[hour] = hours[hour] || []).push(i);
                 });
@@ -137,13 +156,17 @@
                     hours[hour].forEach(i => {
                         const btn = document.createElement('button');
                         btn.type = 'button';
-                        btn.className = 'btn btn-sm clip-btn ' + (i === playingIndex ? 'btn-success' : 'btn-outline-secondary');
+                        btn.className = 'btn btn-sm clip-btn ' +
+                            (i === playingIndex ? 'btn-success' : (clips[i].motion ? 'clip-motion' : 'btn-outline-secondary'));
                         btn.textContent = clips[i].start.slice(11, 16);
                         btn.onclick = () => play(i);
                         row.appendChild(btn);
                     });
                     box.appendChild(row);
                 });
+                if (!box.children.length) {
+                    box.innerHTML = '<p class="text-muted">이 날은 움직임이 기록된 구간이 없어요.</p>';
+                }
             }
 
             function setNowPlaying(clip) {

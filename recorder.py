@@ -256,10 +256,14 @@ def _is_playable(path, st):
 
 
 def list_recordings(cam):
-    """웹에 보여줄 녹화 목록 (녹화가 끝난 파일만)"""
+    """웹에 보여줄 녹화 목록 (녹화가 끝난 파일만), 움직임이 있었던 구간은 motion=True"""
+    from motion import motion_minutes
+
     now = time.time()
+    segments = _segments(cam)
+    minutes = motion_minutes(cam, {start.strftime("%Y%m%d") for start, _ in segments})
     result = []
-    for start, path in _segments(cam):
+    for start, path in segments:
         try:
             st = os.stat(path)
         except FileNotFoundError:
@@ -268,11 +272,20 @@ def list_recordings(cam):
             continue
         if not _is_playable(path, st):
             continue
+        end = datetime.fromtimestamp(st.st_mtime)
+        t = start.replace(second=0)
+        motion = False
+        while t <= end:
+            if t.strftime("%Y%m%d%H%M") in minutes:
+                motion = True
+                break
+            t += timedelta(minutes=1)
         result.append({
             "name": os.path.basename(path),
             "start": start.isoformat(),
-            "end": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            "end": end.isoformat(timespec="seconds"),
             "size": st.st_size,
+            "motion": motion,
         })
     return result
 
@@ -304,6 +317,9 @@ class RecordingCleaner:
             time.sleep(self.interval)
 
     def clean(self):
+        from motion import clean_motion_logs
+
+        clean_motion_logs()
         cutoff = datetime.now() - timedelta(days=KEEP_DAYS)
         # 각 카메라의 가장 최근 파일은 녹화 중일 수 있어서 지우지 않음
         candidates = []

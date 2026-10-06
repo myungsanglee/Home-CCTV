@@ -44,6 +44,7 @@ class TapoCamera:
         self._ptz_lock = Lock()
         self._ptz = None
         self._token = None
+        self.last_move = 0.0  # 마지막으로 PTZ를 움직인 시각 (움직임 감지에서 사용)
         self.stopped = False
 
     def stream_url(self, stream):
@@ -93,6 +94,7 @@ class TapoCamera:
         return self._ptz
 
     def _call_ptz(self, method, params):
+        self.last_move = time.time()
         with self._ptz_lock:
             try:
                 ptz = self._get_ptz()

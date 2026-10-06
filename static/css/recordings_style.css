@@ -20,3 +20,25 @@
 .clip-btn {
     min-width: 3.5rem;
 }
+
+/* 움직임이 있었던 10분 영상 */
+.clip-motion {
+    color: #fff;
+    background-color: #f08c00;
+    border-color: #f08c00;
+}
+
+.clip-motion:hover {
+    color: #fff;
+    background-color: #d97900;
+    border-color: #d97900;
+}
+
+.legend-motion {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 0.2rem;
+    background-color: #f08c00;
+    vertical-align: -0.1rem;
+}
