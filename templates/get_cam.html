@@ -46,14 +46,21 @@
 
         <div class="container">
             <div class="row align-items-center justify-content-evenly">
-                <div class="col-3 col-md-5 col-lg-4 col-xl-3 text-center">
-                    <button class='btn btn-outline-success mb-2' type="button" onClick="servo_center()">
-                        Center
-                    </button>
-                    <br>
-                    <button class='btn btn-outline-secondary' type="button" id="audioBtn" onClick="toggleAudio()">
-                        <span class="bi bi-volume-mute"></span>
-                    </button>
+                <div class="col-4 col-md-5 col-lg-4 col-xl-3 text-center">
+                    <!-- Center 버튼과 소리/저장 버튼 줄의 가로 길이를 맞춤 -->
+                    <div class="d-inline-flex flex-column gap-2">
+                        <button class='btn btn-outline-success' type="button" onClick="servo_center()">
+                            Center
+                        </button>
+                        <div class="d-flex flex-nowrap gap-1">
+                            <button class='btn btn-outline-secondary flex-fill' type="button" id="audioBtn" onClick="toggleAudio()">
+                                <span class="bi bi-volume-mute"></span>
+                            </button>
+                            <button class='btn btn-outline-secondary flex-fill' type="button" onClick="saveSnapshot()">
+                                <span class="bi bi-camera"></span>
+                            </button>
+                        </div>
+                    </div>
                     <audio id="audioPlayer" autoplay playsinline></audio>
                 </div>
 
@@ -376,6 +383,42 @@
                 v.setUint16(32, 2, true); v.setUint16(34, 16, true);
                 s(36, 'data'); v.setUint32(40, 0, true);
                 return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+            }
+
+            // 지금 보고 있는 카메라 화면을 원본 해상도로 저장 (확대 여부와 상관없이 전체 화면)
+            // 모바일은 공유 창의 "이미지 저장"으로 사진 앱에 저장, PC는 파일로 다운로드
+            function saveSnapshot() {
+                const img = document.getElementById('videoFeed');
+                if (!img.naturalWidth) return;
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                canvas.getContext('2d').drawImage(img, 0, 0);
+
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const name = `cctv_${currentCam}_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+                    `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+
+                // iOS는 공유 창을 버튼을 누른 그 순간에 열어야 해서, 비동기 없이 바로 파일로 만듦
+                const bin = atob(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const file = new File([bytes], name, { type: 'image/jpeg' });
+
+                const isTouch = window.matchMedia('(pointer: coarse)').matches;
+                if (isTouch && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    navigator.share({ files: [file] }).catch(() => {});
+                    return;
+                }
+                const url = URL.createObjectURL(file);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             }
 
             async function toggleAudio() {
