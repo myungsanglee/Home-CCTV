@@ -2,16 +2,15 @@ import asyncio
 import fractions
 import os
 import threading
-import time
 from datetime import timedelta
 
 import av
-import cv2
 import sounddevice as sd
 from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, Response, request, redirect, url_for, session, flash
 
+from mjpeg import MjpegStream
 from picam import VideoGet
 from pan_tilt import PanTiltServo
 from tapo import TapoCamera
@@ -66,19 +65,6 @@ class MicrophoneTrack(AudioStreamTrack):
         with _audio_queues_lock:
             _audio_queues.discard(self._queue)
         super().stop()
-
-
-def gen_frames(camera):
-    while True:
-        try:
-            frame = camera.frame
-            success, frame = cv2.imencode(".jpg", frame)
-            if not success:
-                continue
-            yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame.tobytes() + b"\r\n\r\n")
-            time.sleep(0.03)  # 최대 약 30fps로 제한 (같은 프레임 반복 인코딩 방지)
-        except Exception:
-            continue
 
 
 def tapo_ptz(method, *args):
@@ -146,7 +132,7 @@ def get_cam():
 def video_feed():
     if "id" not in session:
         return redirect(url_for("login"))
-    return Response(gen_frames(picam), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(pi_stream.frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/video_feed/tapo")
@@ -155,7 +141,7 @@ def video_feed_tapo():
         return redirect(url_for("login"))
     if tapo is None:
         return "tapo not configured", 503
-    return Response(gen_frames(tapo), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(tapo_stream.frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/offer", methods=["POST"])
@@ -257,6 +243,8 @@ if __name__ == "__main__":
     tapo = None
     if os.environ.get("TAPO_IP") and os.environ.get("TAPO_USER"):
         tapo = TapoCamera(os.environ["TAPO_IP"], os.environ["TAPO_USER"], os.environ["TAPO_PASSWORD"]).start()
+    pi_stream = MjpegStream(picam)
+    tapo_stream = MjpegStream(tapo) if tapo else None
     pan_tilt_servo = PanTiltServo()
     per_angle = 5
 
