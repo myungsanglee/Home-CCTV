@@ -2,9 +2,25 @@ import time
 from threading import Thread, Lock
 
 import cv2
-from picamera2 import Picamera2
+from picamera2 import MappedArray, Picamera2
 from libcamera import controls
 import numpy as np
+
+# 영상 왼쪽 위 날짜/시각 (Tapo와 같은 형식)
+TIMESTAMP_FORMAT = "%Y-%m-%d %I:%M:%S %p"
+TIMESTAMP_ORIGIN = (16, 44)
+TIMESTAMP_FONT = cv2.FONT_HERSHEY_SIMPLEX
+TIMESTAMP_SCALE = 1.2
+
+
+def draw_timestamp(request):
+    """카메라가 프레임을 만든 직후에 날짜/시각을 그려 넣음
+    (실시간 화면, 녹화, 화면 저장, 움직임 감지 모두 같은 프레임을 씀)"""
+    text = time.strftime(TIMESTAMP_FORMAT)
+    with MappedArray(request, "main") as m:
+        # 밝은 배경에서도 보이도록 검은 테두리 위에 흰 글씨
+        cv2.putText(m.array, text, TIMESTAMP_ORIGIN, TIMESTAMP_FONT, TIMESTAMP_SCALE, (0, 0, 0), 6, cv2.LINE_AA)
+        cv2.putText(m.array, text, TIMESTAMP_ORIGIN, TIMESTAMP_FONT, TIMESTAMP_SCALE, (255, 255, 255), 2, cv2.LINE_AA)
 
 
 class VideoGet:
@@ -21,6 +37,7 @@ class VideoGet:
         # self.picam2.video_configuration.controls.FrameRate = 60.
         self.picam2.preview_configuration.align()
         self.picam2.configure("preview")
+        self.picam2.pre_callback = draw_timestamp
         self.picam2.start()
         self._frame = self.picam2.capture_array()
         self._lock = Lock()

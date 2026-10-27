@@ -14,11 +14,11 @@ from flask import Flask, abort, jsonify, render_template, Response, request, red
 
 from audio import AudioFanout
 from mjpeg import MjpegStream
-from motion import PiMotion, TapoMotion
+from motion import FrameMotion
 from picam import VideoGet
 from pan_tilt import PanTiltServo
 from recorder import CAMERAS, PiRecorder, RecordingCleaner, TapoRecorder, list_recordings, recording_path, stop_all
-from tapo import ONVIF_PORT, WSDL_DIR, TapoAudio, TapoCamera
+from tapo import TapoAudio, TapoCamera
 
 load_dotenv()
 
@@ -313,10 +313,10 @@ if __name__ == "__main__":
         TapoRecorder(tapo.record_url).start()
     RecordingCleaner().start()
 
-    # 움직임 감지: Pi는 직접 프레임 비교, Tapo는 카메라 자체 감지 알림을 받음
-    PiMotion(picam, pan_tilt_servo).start()
+    # 움직임 감지: 두 카메라 모두 실시간 화면 프레임을 비교
+    FrameMotion("pi", picam, pan_tilt_servo).start()
     if tapo:
-        TapoMotion(tapo, WSDL_DIR, ONVIF_PORT).start()
+        FrameMotion("tapo", tapo, tapo).start()
 
     def _shutdown(signum, frame):
         # 서비스 종료/재시작 시 녹화 파일을 제대로 닫은 다음 끝냄

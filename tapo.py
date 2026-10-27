@@ -7,6 +7,7 @@ import av
 import cv2
 import numpy as np
 from onvif import ONVIFCamera
+from onvif.client import ONVIFService
 
 from audio import AudioFanout
 
@@ -15,6 +16,9 @@ ONVIF_PORT = 2020
 RTSP_PORT = 554
 STREAM = "stream2"  # 실시간 화면용 1280x720
 RECORD_STREAM = "stream1"  # 녹화용 2304x1296
+
+EVENTS_NS = "http://www.onvif.org/ver10/events/wsdl"
+PULLPOINT_KEY = EVENTS_NS + "/PullPointSubscription"
 
 # ONVIF 좌표(-1 ~ 1)를 각도로 변환하기 위한 C210 스펙 (좌우 360도, 상하 114도)
 PAN_DEG_PER_UNIT = 360.0 / 2.0
@@ -27,6 +31,26 @@ DIRECTIONS = {
     "up": (0, 1),
     "down": (0, -1),
 }
+
+
+def subscription_manager(cam, address):
+    """이벤트 구독 연장(Renew)/해지(Unsubscribe)용 클라이언트 (onvif-zeep에 직접 만드는 함수가 없음)"""
+    return ONVIFService(address, cam.user, cam.passwd, os.path.join(cam.wsdl_dir, "events.wsdl"),
+                        cam.encrypt, cam.daemon, no_cache=cam.no_cache, dt_diff=cam.dt_diff,
+                        binding_name=f"{{{EVENTS_NS}}}SubscriptionManagerBinding", transport=cam.transport)
+
+
+def connect_onvif(ip, user, password):
+    """ONVIF 연결. onvif-zeep은 연결할 때마다 만료 시간 없는 이벤트 구독을 몰래 하나 만들어서,
+    여러 번 연결하면 구독이 쌓여 Tapo가 더 이상 새 구독에 알림을 보내지 않음 -> 바로 해지"""
+    cam = ONVIFCamera(ip, ONVIF_PORT, user, password, WSDL_DIR)
+    address = cam.xaddrs.pop(PULLPOINT_KEY, None)
+    if address:
+        try:
+            subscription_manager(cam, address).Unsubscribe()
+        except Exception:
+            pass
+    return cam
 
 
 class TapoCamera:
@@ -88,7 +112,7 @@ class TapoCamera:
 
     def _get_ptz(self):
         if self._ptz is None:
-            cam = ONVIFCamera(self.ip, ONVIF_PORT, self.user, self.password, WSDL_DIR)
+            cam = connect_onvif(self.ip, self.user, self.password)
             self._token = cam.create_media_service().GetProfiles()[0].token
             self._ptz = cam.create_ptz_service()
         return self._ptz

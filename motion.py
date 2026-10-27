@@ -1,10 +1,11 @@
 import os
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from threading import Lock, Thread
 
 import cv2
-from onvif import ONVIFCamera
+import numpy as np
 
 from recorder import KEEP_DAYS, camera_dir, storage_ready
 
@@ -12,16 +13,14 @@ from recorder import KEEP_DAYS, camera_dir, storage_ready
 MOTION_DIRNAME = "motion"
 SETTLE_AFTER_MOVE = 4  # 카메라를 돌린 직후 이 시간(초) 동안은 감지하지 않음
 
-# Pi 카메라 감지 설정 (작은 화면을 이전 화면과 비교)
-PI_CHECK_FPS = 3
-PI_SIZE = (320, 180)
-PI_PIXEL_THRESHOLD = 25    # 밝기 차이가 이보다 크면 바뀐 픽셀로 봄
-PI_MIN_CHANGED = 0.005     # 화면의 0.5% 이상 바뀌면 움직임
-PI_MAX_CHANGED = 0.6       # 60% 넘게 한꺼번에 바뀌면 조명 변화로 보고 무시
-
-# Tapo: 카메라 자체 감지 알림(ONVIF 이벤트)을 받음
-TAPO_RESUBSCRIBE = 240     # 이 라이브러리로는 구독 연장이 안 돼서 4분마다 새로 구독
-TAPO_STALE = 30            # 30초 넘게 알림이 없으면 움직임이 끝난 것으로 봄
+# 감지 설정 (두 카메라 공통: 작은 화면을 이전 화면과 비교)
+CHECK_FPS = 3
+SIZE = (320, 180)
+PIXEL_THRESHOLD = 25    # 밝기 차이가 이보다 크면 바뀐 픽셀로 봄
+MIN_CHANGED = 0.005     # 화면의 0.5% 이상 바뀌면 움직임
+MAX_CHANGED = 0.6       # 60% 넘게 한꺼번에 바뀌면 조명 변화로 보고 무시
+MAX_SHAKE = 15          # 화면 전체가 이보다 많이(픽셀, 320x180 기준) 밀리면 카메라가 크게 움직인 것으로 보고 무시
+CONFIRM = (2, 3)        # 최근 3번 중 2번 이상 움직임이어야 기록 (약 1초, 한두 번 툭 튀는 건 무시)
 
 
 def _motion_dir(cam):
@@ -75,13 +74,40 @@ def clean_motion_logs():
                 os.remove(os.path.join(d, name))
 
 
-class PiMotion:
-    """실시간 화면용으로 이미 받고 있는 프레임을 작게 줄여 이전 프레임과 비교"""
+def shake_compensated_ratio(prev, gray):
+    """두 프레임 사이 화면 전체의 흔들림(평행이동)을 먼저 맞춘 뒤, 바뀐 픽셀 비율을 계산
 
-    def __init__(self, video_get, servo):
-        self.video_get = video_get
-        self.servo = servo
-        self.log = MotionLog("pi")
+    서보가 살짝 떨리면 화면 전체가 몇 픽셀씩 밀려서 모든 경계선이 바뀐 것처럼 보이는데,
+    밀린 만큼 되돌려 맞추면 그 차이는 사라지고 일부만 움직인 것(고양이 등)만 남음
+    반환: (바뀐 픽셀 비율, 화면 전체가 밀린 양(px)), 흔들림이 너무 크면 비율은 None
+    """
+    h, w = gray.shape
+    # 화면 가장자리가 흔들림 계산을 방해하지 않도록 가운데에 무게를 두는 창(Hanning window)을 씀
+    window = cv2.createHanningWindow((w, h), cv2.CV_32F)
+    (dx, dy), _ = cv2.phaseCorrelate(prev.astype(np.float32), gray.astype(np.float32), window)
+    shake = (dx * dx + dy * dy) ** 0.5
+    if shake > MAX_SHAKE:
+        return None, shake
+    aligned = cv2.warpAffine(prev, np.float32([[1, 0, dx], [0, 1, dy]]), (w, h), borderMode=cv2.BORDER_REPLICATE)
+    # 밀린 만큼 가장자리는 비교할 수 없어서 제외
+    m = int(np.ceil(max(abs(dx), abs(dy)))) + 2
+    diff = cv2.absdiff(gray[m:h - m, m:w - m], aligned[m:h - m, m:w - m])
+    _, changed = cv2.threshold(diff, PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    return cv2.countNonZero(changed) / changed.size, shake
+
+
+class FrameMotion:
+    """실시간 화면용으로 이미 받고 있는 프레임을 작게 줄여 이전 프레임과 비교 (Pi, Tapo 공통)
+    (카메라 떨림으로 화면 전체가 흔들린 건 보정하고, 최근 3번 중 2번 이상 움직임일 때만 기록)
+
+    camera: frame 속성으로 최신 프레임을 주는 객체 (VideoGet, TapoCamera)
+    mover: last_move 속성으로 카메라를 마지막으로 돌린 시각을 주는 객체 (PanTiltServo, TapoCamera)
+    """
+
+    def __init__(self, cam_name, camera, mover):
+        self.camera = camera
+        self.mover = mover
+        self.log = MotionLog(cam_name)
         self.active = False
 
     def start(self):
@@ -90,70 +116,24 @@ class PiMotion:
 
     def _run(self):
         prev = None
-        interval = 1.0 / PI_CHECK_FPS
+        recent = deque(maxlen=CONFIRM[1])
+        interval = 1.0 / CHECK_FPS
         while True:
             time.sleep(interval)
-            if time.time() - self.servo.last_move < SETTLE_AFTER_MOVE:
+            if time.time() - self.mover.last_move < SETTLE_AFTER_MOVE:
                 prev = None
+                recent.clear()
                 self.active = False
                 continue
             try:
-                small = cv2.resize(self.video_get.frame, PI_SIZE, interpolation=cv2.INTER_AREA)
+                small = cv2.resize(self.camera.frame, SIZE, interpolation=cv2.INTER_AREA)
             except Exception:
                 continue
             gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0)
             if prev is not None:
-                _, changed = cv2.threshold(cv2.absdiff(gray, prev), PI_PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
-                ratio = cv2.countNonZero(changed) / changed.size
-                self.active = PI_MIN_CHANGED <= ratio <= PI_MAX_CHANGED
+                ratio, _ = shake_compensated_ratio(prev, gray)
+                recent.append(ratio is not None and MIN_CHANGED <= ratio <= MAX_CHANGED)
+                self.active = sum(recent) >= CONFIRM[0]
                 if self.active:
                     self.log.mark()
             prev = gray
-
-
-class TapoMotion:
-    """Tapo 카메라가 직접 감지한 움직임 알림(IsMotion)을 받아 기록. 라즈베리파이 부담 거의 없음
-
-    Tapo는 상태가 바뀔 때만이 아니라 같은 알림을 계속 반복해서 보내므로 마지막 값만 사용
-    """
-
-    def __init__(self, tapo, wsdl_dir, port):
-        self.tapo = tapo
-        self.wsdl_dir = wsdl_dir
-        self.port = port
-        self.log = MotionLog("tapo")
-        self.active = False
-
-    def start(self):
-        Thread(target=self._run, daemon=True).start()
-        return self
-
-    def _subscribe(self):
-        cam = ONVIFCamera(self.tapo.ip, self.port, self.tapo.user, self.tapo.password, self.wsdl_dir)
-        cam.create_events_service().CreatePullPointSubscription(
-            {"InitialTerminationTime": f"PT{TAPO_RESUBSCRIBE + 60}S"})
-        return cam.create_pullpoint_service()
-
-    def _run(self):
-        last_msg = 0.0
-        while True:
-            try:
-                pullpoint = self._subscribe()
-                subscribed_at = time.time()
-                while time.time() - subscribed_at < TAPO_RESUBSCRIBE:
-                    result = pullpoint.PullMessages({"Timeout": "PT5S", "MessageLimit": 100})
-                    for msg in result.NotificationMessage or []:
-                        data = msg.Message._value_1.find(".//{http://www.onvif.org/ver10/schema}Data")
-                        for item in data if data is not None else []:
-                            if item.get("Name") == "IsMotion":
-                                self.active = item.get("Value") == "true"
-                                last_msg = time.time()
-                    if time.time() - last_msg > TAPO_STALE:
-                        self.active = False
-                    moved_recently = time.time() - self.tapo.last_move < SETTLE_AFTER_MOVE
-                    if self.active and not moved_recently:
-                        self.log.mark()
-            except Exception as e:
-                print(f"tapo motion error: {e}", flush=True)
-                self.active = False
-                time.sleep(10)
