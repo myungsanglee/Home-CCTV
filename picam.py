@@ -13,6 +13,10 @@ from applog import supervised_thread
 
 log = logging.getLogger("pi-camera")
 
+# 센서 모드: IMX219(Camera Module v2)의 1920x1080 모드는 센서 가운데만 잘라 써서 화각이 좁음(가로 39°)
+# 1640x1232(센서 전체를 2x2로 묶어 읽는 모드)를 쓰면 가로 전체를 써서 화각이 넓어짐(가로 62°, 세로 37.5°, 16:9)
+SENSOR_MODE = (1640, 1232)
+
 # 영상 왼쪽 위 날짜/시각 (Tapo와 같은 형식)
 TIMESTAMP_FORMAT = "%Y-%m-%d %I:%M:%S %p"
 TIMESTAMP_ORIGIN = (16, 44)
@@ -119,6 +123,8 @@ class VideoGet:
         # picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous, "AfSpeed": controls.AfSpeedEnum.Fast})
         picam2.preview_configuration.main.size = (1280, 720)
         picam2.preview_configuration.main.format = "RGB888"
+        picam2.preview_configuration.sensor.output_size = SENSOR_MODE
+        picam2.preview_configuration.sensor.bit_depth = 10
         # picam2.video_configuration.controls.FrameRate = 60.
         picam2.preview_configuration.align()
         picam2.configure("preview")
