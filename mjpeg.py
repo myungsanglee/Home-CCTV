@@ -1,7 +1,9 @@
 import time
-from threading import Condition, Thread
+from threading import Condition
 
 import cv2
+
+from applog import supervised_thread
 
 
 class MjpegStream:
@@ -41,8 +43,7 @@ class MjpegStream:
         with self._cond:
             self._viewers += 1
             if self._thread is None:
-                self._thread = Thread(target=self._encode_loop, daemon=True)
-                self._thread.start()
+                self._thread = supervised_thread("mjpeg-encoder", self._encode_loop)
         seq = 0
         try:
             while True:

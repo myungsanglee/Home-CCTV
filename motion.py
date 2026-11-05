@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from collections import deque
@@ -7,6 +8,7 @@ from threading import Lock, Thread
 import cv2
 import numpy as np
 
+from applog import supervised_thread
 from recorder import KEEP_DAYS, camera_dir, storage_ready
 
 # 움직임이 있었던 분(minute)을 카메라별, 날짜별 파일에 기록: <recordings>/<cam>/motion/YYYYMMDD.txt
@@ -105,13 +107,14 @@ class FrameMotion:
     """
 
     def __init__(self, cam_name, camera, mover):
+        self.cam_name = cam_name
         self.camera = camera
         self.mover = mover
         self.log = MotionLog(cam_name)
         self.active = False
 
     def start(self):
-        Thread(target=self._run, daemon=True).start()
+        supervised_thread(f"{self.cam_name}-motion", self._run)
         return self
 
     def _run(self):

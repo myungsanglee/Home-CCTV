@@ -1,8 +1,8 @@
 import asyncio
 import fractions
+import logging
 import os
 import signal
-import threading
 from datetime import timedelta
 from functools import wraps
 
@@ -12,10 +12,11 @@ from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, render_template, Response, request, redirect, url_for, session, flash, send_file
 
+from applog import recent_errors, setup_logging, supervised_thread
 from audio import AudioFanout
 from mjpeg import MjpegStream
 from motion import FrameMotion
-from picam import VideoGet
+from picam import VideoGet, run_with_timeout
 from pan_tilt import PanTiltServo
 from recorder import CAMERAS, PiRecorder, RecordingCleaner, TapoRecorder, list_recordings, recording_path, stop_all
 from tapo import TapoAudio, TapoCamera
@@ -31,7 +32,7 @@ SAMPLE_RATE = 48000
 CHUNK_SIZE = 960  # 20ms @ 48kHz
 
 webrtc_loop = asyncio.new_event_loop()
-threading.Thread(target=webrtc_loop.run_forever, daemon=True).start()
+supervised_thread("webrtc-loop", webrtc_loop.run_forever)
 pcs = set()
 
 # Pi USB 마이크 - 서버 시작 시 한 번만 열고 유지
@@ -139,6 +140,27 @@ def get_cam():
     else:
         flash("Please Login")
         return redirect(url_for("login"))
+
+
+@app.route("/status")
+@api_login_required
+def camera_status():
+    """웹 배너용: Pi 카메라가 멈춰 있는지, 최근 24시간 멈춤/복구 기록, 최근 24시간 경고/오류 시각"""
+    return jsonify({"pi": picam.status(), "error_ts": [e["ts"] for e in recent_errors()]})
+
+
+@app.route("/errors")
+def errors_page():
+    if "id" not in session:
+        flash("Please Login")
+        return redirect(url_for("login"))
+    return render_template("errors.html")
+
+
+@app.route("/errors/list")
+@api_login_required
+def errors_list():
+    return jsonify(recent_errors())
 
 
 @app.route("/recordings")
@@ -282,6 +304,8 @@ def set_angle():
 
 
 if __name__ == "__main__":
+    setup_logging()
+    logging.getLogger("cctv").info("서비스 시작")
     login_db = {
         "michael": os.environ["MICHAEL_PASSWORD"],
         "natalia": os.environ["NATALIA_PASSWORD"],
@@ -322,6 +346,19 @@ if __name__ == "__main__":
         # 서비스 종료/재시작 시 녹화 파일을 제대로 닫은 다음 끝냄
         stop_all()
         os._exit(0)
+
+    def _camera_fatal():
+        # 카메라를 여러 번 다시 열어도 복구되지 않으면, 녹화 파일을 닫고 프로세스를 끝내서
+        # systemd(Restart=always)가 서비스를 새로 시작하게 함
+        logging.getLogger("pi-camera").error("Pi 카메라 복구 실패, 서비스를 재시작함")
+        try:
+            # 녹화 파일 닫기가 막혀도 재시작은 되도록 20초까지만 기다림
+            run_with_timeout(stop_all, 20)
+        except Exception:
+            logging.getLogger("recorder").exception("재시작 전 녹화 파일 닫기 실패")
+        os._exit(1)
+
+    picam.on_fatal = _camera_fatal
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)

@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from threading import Thread, Lock
@@ -9,7 +10,10 @@ import numpy as np
 from onvif import ONVIFCamera
 from onvif.client import ONVIFService
 
+from applog import supervised_thread
 from audio import AudioFanout
+
+log = logging.getLogger("tapo")
 
 WSDL_DIR = os.environ.get("ONVIF_WSDL_DIR", "/home/michael/.local/lib/python3.4/site-packages/wsdl")
 ONVIF_PORT = 2020
@@ -87,10 +91,11 @@ class TapoCamera:
 
     def start(self):
         self.stopped = False
-        Thread(target=self.get, args=(), daemon=True).start()
+        supervised_thread("tapo-camera", self.get)
         return self
 
     def get(self):
+        disconnected_at = None
         while not self.stopped:
             cap = cv2.VideoCapture(self.rtsp_url)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -98,11 +103,17 @@ class TapoCamera:
                 ok, new_frame = cap.read()
                 if not ok:
                     break
+                if disconnected_at is not None:
+                    log.info(f"Tapo 영상 다시 연결됨 ({time.time() - disconnected_at:.0f}초 끊김)")
+                    disconnected_at = None
                 with self._lock:
                     self._frame = new_frame
             cap.release()
             if not self.stopped:
-                # 연결이 끊기면 안내 화면을 보여주고 재연결
+                # 연결이 끊기면 안내 화면을 보여주고 재연결 (끊긴 순간에 한 번만 기록)
+                if disconnected_at is None:
+                    disconnected_at = time.time()
+                    log.warning("Tapo 영상 연결이 끊김, 다시 연결 시도 중")
                 with self._lock:
                     self._frame = self._placeholder("Tapo disconnected. Reconnecting...")
                 time.sleep(3)
@@ -156,8 +167,7 @@ class TapoAudio(AudioFanout):
     def _on_first_listener(self):
         with self._thread_lock:
             if self._thread is None:
-                self._thread = Thread(target=self._run, daemon=True)
-                self._thread.start()
+                self._thread = supervised_thread("tapo-audio", self._run)
 
     def _run(self):
         while True:

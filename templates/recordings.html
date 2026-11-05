@@ -30,6 +30,9 @@
             </div>
         </nav>
 
+        <!-- Pi 카메라 멈춤/복구 알림 -->
+        <div id="cameraAlert" class="container mt-3"></div>
+
         {% if tapo_enabled %}
         <ul class="nav nav-pills justify-content-center mt-3" id="camTabs">
             <li class="nav-item">
@@ -202,5 +205,6 @@
 
             setCam(localStorage.getItem('recCam') || 'pi');
         </script>
+        <script src="/static/js/status_alert.js"></script>
     </body>
 </html>

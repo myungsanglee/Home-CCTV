@@ -1,4 +1,5 @@
 import fcntl
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,10 @@ import prctl
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FfmpegOutput
 from picamera2.outputs.output import Output
+
+from applog import supervised_thread
+
+log = logging.getLogger("recorder")
 
 RECORD_MOUNT = os.environ.get("RECORD_MOUNT", "/mnt/cctv")
 RECORD_ROOT = os.path.join(RECORD_MOUNT, "recordings")
@@ -58,14 +63,23 @@ def stop_all():
     for rec in _recorders:
         try:
             rec.stop()
-        except Exception as e:
-            print(f"recorder stop error: {e}", flush=True)
+        except Exception:
+            log.exception("녹화 종료 처리 실패")
 
 
 def _kill_with_parent():
     # 앱이 꺼지면 ffmpeg도 정상 종료(SIGTERM)시켜서 녹화 중이던 파일을 제대로 닫게 함
     # (SIGKILL로 죽이면 MP4 목차(moov)가 안 써져서 재생 불가)
     prctl.set_pdeathsig(signal.SIGTERM)
+
+
+_storage_warned = {"at": 0.0}
+
+
+def _warn_no_storage_once_per_hour():
+    if time.time() - _storage_warned["at"] > 3600:
+        _storage_warned["at"] = time.time()
+        log.warning(f"녹화용 USB({RECORD_MOUNT})가 연결돼 있지 않아 녹화하지 않음")
 
 
 class TapoRecorder:
@@ -78,7 +92,7 @@ class TapoRecorder:
 
     def start(self):
         _recorders.append(self)
-        Thread(target=self._run, daemon=True).start()
+        supervised_thread("tapo-recorder", self._run)
         return self
 
     def stop(self):
@@ -95,6 +109,7 @@ class TapoRecorder:
     def _run(self):
         while not self._stopping:
             if not storage_ready():
+                _warn_no_storage_once_per_hour()
                 time.sleep(30)
                 continue
             os.makedirs(camera_dir("tapo"), exist_ok=True)
@@ -105,7 +120,9 @@ class TapoRecorder:
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "32k",
             ] + segment_args("tapo")
             self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, preexec_fn=_kill_with_parent)
-            self._proc.wait()
+            code = self._proc.wait()
+            if not self._stopping:
+                log.warning(f"Tapo 녹화(ffmpeg)가 끝남 (종료 코드 {code}), 5초 뒤 다시 시작")
             # 연결이 끊기거나 USB가 빠지면 잠시 후 다시 시작
             time.sleep(5)
 
@@ -162,48 +179,78 @@ class FfmpegAudioOutput(FfmpegOutput):
 
 class PiRecorder:
     """Pi 카메라를 하드웨어 H.264 인코더로 녹화 (실시간 화면 캡처와 동시에 동작)
-    소리는 USB 마이크(실시간 듣기와 같은 소스)에서 함께 녹음"""
+    소리는 USB 마이크(실시간 듣기와 같은 소스)에서 함께 녹음
+
+    카메라가 멈춰서 VideoGet이 카메라를 다시 열 때는 녹화를 잠깐 멈췄다가 새 카메라로 이어서 녹화함
+    """
 
     def __init__(self, video_get, audio_source):
-        self.picam2 = video_get.picam2
+        self.video_get = video_get
         self.audio_source = audio_source
         self._stopping = False
+        self._paused = False
+        video_get.before_restart.append(self.pause)
+        video_get.after_restart.append(self.resume)
 
     def start(self):
         _recorders.append(self)
-        Thread(target=self._run, daemon=True).start()
+        supervised_thread("pi-recorder", self._run)
         return self
 
-    def stop(self):
-        self._stopping = True
+    def _stop_encoder(self):
         try:
             # 인코더를 멈추면 ffmpeg 입력이 닫히고, ffmpeg가 파일을 정리한 뒤 끝남
-            self.picam2.stop_encoder()
+            self.video_get.picam2.stop_encoder()
         except Exception:
             pass
 
+    def stop(self):
+        self._stopping = True
+        self._stop_encoder()
+
+    def pause(self):
+        self._paused = True
+        self._stop_encoder()
+
+    def resume(self):
+        self._paused = False
+
     def _run(self):
         while not self._stopping:
+            if self._paused:
+                time.sleep(1)
+                continue
             if not storage_ready():
                 time.sleep(30)
                 continue
             os.makedirs(camera_dir("pi"), exist_ok=True)
             output = FfmpegAudioOutput(" ".join(segment_args("pi")), self.audio_source)
-            try:
-                self.picam2.start_encoder(H264Encoder(bitrate=PI_BITRATE), output)
-            except Exception:
+            with self.video_get.camera_lock:
+                if self._paused:
+                    continue
+                picam2 = self.video_get.picam2
+                try:
+                    picam2.start_encoder(H264Encoder(bitrate=PI_BITRATE), output)
+                except Exception:
+                    picam2 = None
+            if picam2 is None:
                 time.sleep(30)
                 continue
-            # ffmpeg가 끝나면(USB 빠짐 등) 인코더를 멈추고 다시 시작
-            while not self._stopping and output.ffmpeg is not None and output.ffmpeg.poll() is None:
+            # ffmpeg가 끝나면(USB 빠짐, 카메라 재시작 등) 인코더를 멈추고 다시 시작
+            while not self._stopping and not self._paused and output.ffmpeg is not None and output.ffmpeg.poll() is None:
                 time.sleep(1)
             if self._stopping:
                 return
-            try:
-                self.picam2.stop_encoder()
-            except Exception:
-                pass
-            time.sleep(5)
+            if not self._paused:
+                code = output.ffmpeg.poll() if output.ffmpeg is not None else None
+                log.warning(f"Pi 녹화(ffmpeg)가 끝남 (종료 코드 {code}), 5초 뒤 다시 시작")
+            with self.video_get.camera_lock:
+                try:
+                    picam2.stop_encoder()
+                except Exception:
+                    pass
+            if not self._paused:
+                time.sleep(5)
 
 
 def _parse_start(name):
@@ -304,7 +351,7 @@ class RecordingCleaner:
         self.interval = interval
 
     def start(self):
-        Thread(target=self._run, daemon=True).start()
+        supervised_thread("recording-cleaner", self._run)
         return self
 
     def _run(self):
@@ -312,8 +359,8 @@ class RecordingCleaner:
             if storage_ready():
                 try:
                     self.clean()
-                except Exception as e:
-                    print(f"recording cleaner error: {e}", flush=True)
+                except Exception:
+                    log.exception("오래된 녹화 정리 실패")
             time.sleep(self.interval)
 
     def clean(self):

@@ -1,0 +1,127 @@
+<html>
+    <head>
+        <meta name="description" content="M&N Home CCTV">
+        <meta name="author" content="Michael Lee">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+        <!-- Bootstrap core CSS -->
+        <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Bootstrap Font Icon CSS -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+
+        <!-- Custom CSS -->
+        <link rel="stylesheet" href="/static/css/get_cam_style.css">
+
+        <title>M&N Home CCTV - 오류</title>
+        <style>
+            .error-detail {
+                white-space: pre-wrap;
+                font-size: 0.75rem;
+                max-height: 20rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body>
+        <nav class="navbar p-3">
+            <div class="container-fluid">
+                <a href="/" class="navbar-brand ">
+                    <span class="fs-4 text-white">M&N Home CCTV</span>
+                </a>
+
+                <div class="d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-light" type="button" onClick="location.href='/get_cam'">실시간</button>
+                    <button class="btn btn-outline-light" type="button" onClick="location.href='/recordings'">녹화</button>
+                    <button class="btn btn-outline-light" type="button" onClick="location.href='/logout'">Logout</button>
+                </div>
+            </div>
+        </nav>
+
+        <div id="cameraAlert" class="container mt-3"></div>
+
+        <div class="container my-3">
+            <div class="d-flex align-items-center justify-content-between">
+                <h5 class="m-0">최근 24시간 경고 / 오류</h5>
+                <button class="btn btn-outline-success btn-sm" type="button" onClick="loadErrors()">
+                    <span class="bi bi-arrow-clockwise"></span>
+                </button>
+            </div>
+            <p class="text-muted small mt-1 mb-3">같은 내용이 반복되면 한 줄로 묶어서 횟수를 보여줘요. 누르면 자세한 내용이 보여요.</p>
+            <div id="errors"></div>
+        </div>
+
+        <script>
+            const pad = (n) => String(n).padStart(2, '0');
+            const SOURCE_NAMES = {
+                'pi-camera': 'Pi 카메라', 'pi-recorder': 'Pi 녹화', 'pi-motion': 'Pi 움직임 감지',
+                'tapo': 'Tapo', 'tapo-camera': 'Tapo 카메라', 'tapo-recorder': 'Tapo 녹화', 'tapo-motion': 'Tapo 움직임 감지',
+                'tapo-audio': 'Tapo 소리', 'recorder': '녹화', 'recording-cleaner': '녹화 정리',
+                'mjpeg-encoder': '실시간 영상', 'webrtc-loop': '실시간 소리', 'app': '웹 요청', 'cctv': '서비스',
+            };
+
+            function fmt(ts) {
+                const d = new Date(ts * 1000);
+                return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            }
+
+            async function loadErrors() {
+                const box = document.getElementById('errors');
+                const response = await fetch('/errors/list');
+                const entries = response.ok ? await response.json() : [];
+                if (entries.length) {
+                    // 이 페이지를 봤으니 배너에서 지금까지의 오류는 다시 안 셈
+                    try { localStorage.setItem('errorsSeenTs', JSON.stringify(entries[entries.length - 1].ts)); } catch (e) {}
+                }
+
+                // 같은 출처 + 같은 내용끼리 묶기
+                const groups = new Map();
+                entries.forEach((e) => {
+                    const key = `${e.source}|${e.message}`;
+                    const g = groups.get(key) || { ...e, count: 0, first: e.ts };
+                    g.count += 1;
+                    g.last = e.ts;
+                    if (e.detail) g.detail = e.detail;
+                    if (e.level === 'ERROR' || e.level === 'CRITICAL') g.level = e.level;
+                    groups.set(key, g);
+                });
+                const list = [...groups.values()].sort((a, b) => b.last - a.last);
+
+                box.innerHTML = '';
+                if (!list.length) {
+                    box.innerHTML = '<p class="text-muted">최근 24시간 동안 경고나 오류가 없어요.</p>';
+                    return;
+                }
+                list.forEach((g) => {
+                    const item = document.createElement('details');
+                    item.className = 'border rounded p-2 mb-2';
+                    const summary = document.createElement('summary');
+                    const badge = document.createElement('span');
+                    badge.className = 'badge me-2 ' + (g.level === 'WARNING' ? 'text-bg-warning' : 'text-bg-danger');
+                    badge.textContent = g.level === 'WARNING' ? '경고' : '오류';
+                    summary.appendChild(badge);
+                    const source = document.createElement('strong');
+                    source.className = 'me-2';
+                    source.textContent = SOURCE_NAMES[g.source] || g.source;
+                    summary.appendChild(source);
+                    summary.appendChild(document.createTextNode(g.message));
+                    const when = document.createElement('div');
+                    when.className = 'text-muted small ms-1';
+                    when.textContent = g.count > 1
+                        ? `${g.count}번 · ${fmt(g.first)} ~ ${fmt(g.last)}`
+                        : fmt(g.last);
+                    summary.appendChild(when);
+                    item.appendChild(summary);
+                    const detail = document.createElement('pre');
+                    detail.className = 'error-detail bg-light p-2 mt-2 mb-0';
+                    detail.textContent = g.detail || '자세한 내용 없음';
+                    item.appendChild(detail);
+                    box.appendChild(item);
+                });
+            }
+
+            loadErrors();
+        </script>
+        <script src="/static/js/status_alert.js"></script>
+    </body>
+</html>
