@@ -44,13 +44,16 @@ def camera_dir(cam):
 
 def segment_args(cam):
     # 10분 단위(정각 기준)로 나눠서 저장, 파일 이름은 시작 시각
+    # faststart(파일을 닫을 때 재생 정보를 앞으로 옮기려고 파일 전체를 다시 쓰는 작업)는 쓰지 않음:
+    # 10분 파일(약 100MB)을 USB에 다시 쓰느라 ffmpeg가 5~10초 멈추고, 그동안 Pi 카메라 인코더가 막혀
+    # 실시간 화면 프레임까지 멈춤 (카메라 멈춤 감시가 10분마다 오작동한 원인).
+    # 재생 정보가 파일 끝에 있어도 브라우저는 Range 요청으로 끝부분을 먼저 읽어서 재생함
     return [
         "-f", "segment",
         "-segment_time", str(SEGMENT_SECONDS),
         "-segment_atclocktime", "1",
         "-reset_timestamps", "1",
         "-strftime", "1",
-        "-segment_format_options", "movflags=+faststart",
         os.path.join(camera_dir(cam), "%Y%m%d_%H%M%S.mp4"),
     ]
 
