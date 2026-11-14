@@ -1,5 +1,9 @@
-# Home CCTV Project
-Raspberry Pi 4를 이용하여 Pan/Tilt가 가능한 Home CCTV Project
+# Home CCTV
+
+집에 있는 고양이를 밖에서도 보기 위해 Raspberry Pi 4로 만든 홈 CCTV.
+카메라 2대(Pi 카메라 + Tapo C210)의 실시간 영상·소리, 팬틸트 제어, 24시간 녹화, 움직임 감지를 웹 한 곳에서 제공한다.
+외부 접속은 포트포워딩 없이 Tailscale HTTPS로만 열고, Tapo 카메라도 제조사 클라우드 대신 집 안 네트워크(RTSP/ONVIF)로 직접 받는다.
+
 <div>
 <img src="https://user-images.githubusercontent.com/55565351/226543166-81bb9354-4ac6-414c-bbcd-6d22005ac036.jpg" width="300" height="300"/>
 <img src="https://user-images.githubusercontent.com/55565351/226543218-d7310746-eb78-4f4a-a747-d684d840af0c.jpg" width="300" height="300"/>
@@ -7,70 +11,123 @@ Raspberry Pi 4를 이용하여 Pan/Tilt가 가능한 Home CCTV Project
 <img src="https://user-images.githubusercontent.com/55565351/226543273-aa051578-4431-484a-afdb-705e6a658bef.jpg" width="300" height="300"/>
 </div>
 
-## Implementations
- * 실시간 영상 스트리밍 (MJPEG, 시청자가 여러 명이어도 프레임당 JPEG 인코딩은 한 번)
- * Pi 카메라 영상 왼쪽 위에 날짜/시각 표시 (Tapo와 같은 형식, 녹화와 화면 저장에도 포함)
- * 카메라 2대 탭 전환: Pi 카메라 + Tapo C210 (RTSP)
- * Pan/Tilt
-   * Pi 카메라: PCA9685 + GH-S37D 서보 (Arducam B0283), 마지막 위치 저장/복원
-   * Tapo: ONVIF PTZ (RelativeMove, Center는 AbsoluteMove (0, 0))
- * 카메라 이동 각도 설정 (1°, 5°, 10°, 15°, 20°)
- * 실시간 소리 듣기 (WebRTC): Pi 탭은 USB 마이크, Tapo 탭은 Tapo 카메라 마이크
- * 영상 확대: 더블탭/더블클릭 2배, 두 손가락 1~4배, 확대 중 끌어서 이동
- * 현재 화면 저장 (모바일은 공유 창의 "이미지 저장", PC는 다운로드)
- * 24시간 녹화 (USB 저장, 10분 단위 MP4, 3일 보관)
-   * Pi 카메라: 하드웨어 H.264 1280x720 + USB 마이크 소리
-   * Tapo: 고화질 2304x1296 원본 그대로 + 카메라 마이크 소리
-   * 웹에서 날짜/시간별로 골라 보기, 이어서 재생, 다운로드
- * 움직임 감지: 움직임이 있었던 10분 구간을 녹화 목록에 표시, "움직임 구간만" 보기
-   * 두 카메라 모두 작은 화면(320x180)을 이전 프레임과 비교, 초당 3번
-   * 카메라 떨림으로 화면 전체가 밀린 건 보정해서 무시, 최근 3번 중 2번 이상 움직임일 때만 기록
-   * 카메라를 돌린 직후 4초는 감지하지 않음
- * Pi 카메라 멈춤 감시: 5초 넘게 프레임이 안 오면 카메라를 다시 열어 자동 복구, 안 되면 서비스 재시작
-   * 웹 화면 위쪽 배너로 멈춤/복구 알림, 기록은 `logs/camera_events.log`
- * 오류 로그와 오류 목록 페이지
-   * `logs/app.log`(일반), `logs/error.log`(경고/오류), `logs/errors.jsonl`(웹용), 크기 제한으로 자동 정리
-   * 백그라운드 작업이 오류로 멈추면 기록하고 자동으로 다시 시작
-   * 새 경고/오류는 웹 배너로 알리고 `/errors`에서 목록 확인
- * 로그인/로그아웃 (카메라 제어 요청도 로그인 필요)
- * Tailscale HTTPS로만 접속 가능
+## 아키텍처
 
-## TODOs
-- [ ] Object Tracking
-- [ ] Object Detection
+```mermaid
+flowchart LR
+    subgraph Client["폰 / 맥북 (Tailscale)"]
+        B["브라우저<br/>실시간 · 녹화 · 오류 페이지"]
+    end
 
-## Requirements
-* Raspberry Pi 4, Raspberry Pi OS (Bookworm)
-* Pi 카메라 + Arducam Pan-Tilt Platform (B0283, PCA9685 I2C 0x40)
-* USB 마이크
-* Tapo C210 (선택, 카메라 계정 생성 필요)
-* Tailscale
-* 녹화용 USB 저장장치 (ext4, `/mnt/cctv`에 연결)
+    subgraph Pi["Raspberry Pi 4"]
+        TS["tailscale serve<br/>HTTPS"]
+        F["Flask app.py<br/>127.0.0.1:5000"]
+        PC["picam.py<br/>캡처 · 멈춤 복구"]
+        TC["tapo.py<br/>RTSP · ONVIF PTZ"]
+        PT["pan_tilt.py<br/>부드러운 이동"]
+        MJ["mjpeg.py<br/>MJPEG"]
+        AU["audio.py + aiortc<br/>WebRTC 소리"]
+        MO["motion.py<br/>움직임 감지"]
+        RE["recorder.py<br/>ffmpeg 10분 분할"]
+        LG["applog.py<br/>로그 · 작업 감시"]
+    end
 
-## 설치
+    CAM["Pi 카메라 (IMX219)"] --> PC
+    MIC["USB 마이크"] --> AU
+    PT -- I2C --> SERVO["PCA9685 + 서보 2개"]
+    TAPO["Tapo C210"] -- "RTSP stream2 / ONVIF" --> TC
+    TAPO -- "RTSP stream1" --> RE
+    USB[("USB 저장소<br/>/mnt/cctv")]
+
+    B -- "WireGuard + HTTPS" --> TS
+    TS --> F
+    PC --> MJ
+    TC --> MJ
+    PC --> MO
+    TC --> MO
+    PC -- "H.264 하드웨어 인코더" --> RE
+    AU --> RE
+    RE --> USB
+    MO --> USB
+    F --> MJ & AU & PT & TC & RE
+```
+
+## 기술 스택
+
+| 분류 | 사용 기술 | 용도 |
+|---|---|---|
+| 하드웨어 | Raspberry Pi 4, Camera Module v2(IMX219), Arducam B0283 팬틸트(PCA9685 + GH-S37D), USB 마이크, Tapo C210, USB 저장소 | |
+| 언어 | Python 3.11, JavaScript | |
+| 웹 | Flask, Bootstrap 5, python-dotenv | 서버, 세션 로그인, 화면 |
+| 카메라 | Picamera2(libcamera), OpenCV | Pi 카메라 캡처·H.264 인코딩, 이미지 처리 |
+| 실시간 영상 | MJPEG (`multipart/x-mixed-replace`) | `<img>` 한 줄로 재생 |
+| 실시간 소리 | WebRTC (aiortc), sounddevice(PortAudio), PyAV | 지연 0.1~0.5초 |
+| Tapo 연동 | RTSP, ONVIF (onvif-zeep) | 영상·소리 수신, PTZ |
+| 녹화 | ffmpeg (segment, `-c:v copy`) | 10분 MP4, 재인코딩 없음 |
+| 서보 | adafruit-circuitpython-pca9685, Adafruit-Blinka | I2C PWM |
+| 운영 | systemd, Tailscale (`tailscale serve`), Python `logging` | 자동 실행, HTTPS 외부 접속, 로그 |
+
+## 레포 구조
+
+```
+Home-CCTV/
+├── app.py              # Flask 앱, 라우트, 구성 요소 생성과 연결
+├── picam.py            # Pi 카메라 캡처, 날짜/시각 표시, 멈춤 감지·자동 복구
+├── tapo.py             # Tapo C210 영상(RTSP), PTZ(ONVIF), 마이크
+├── pan_tilt.py         # 팬틸트 서보, 부드러운 이동, 위치 저장
+├── recorder.py         # 24시간 녹화, 3일 보관 정리, 녹화 목록
+├── motion.py           # 움직임 감지 (흔들림 보정 프레임 비교)
+├── mjpeg.py            # 실시간 영상 (프레임당 JPEG 한 번만 인코딩)
+├── audio.py            # 소리 나눠 보내기 (실시간 듣기, 녹화)
+├── applog.py           # 로그 파일, 백그라운드 작업 자동 재시작
+├── templates/          # 로그인, 실시간, 녹화, 오류 페이지
+├── static/             # CSS, 배너 스크립트(status_alert.js), Bootstrap
+├── docs/               # 컴포넌트별 설명, 트러블슈팅 기록
+├── requirements.txt    # pip 패키지
+└── CLAUDE.md           # 개발 규칙과 주의사항
+```
+
+## 개발한 내용
+
+| 기능 | 설명 | 상태 | 문서 |
+|---|---|---|---|
+| 실시간 영상 | 두 카메라 MJPEG, 탭 전환, 시청자가 늘어도 인코딩은 한 번 | 운영 중 | [mjpeg](docs/mjpeg.md) |
+| 영상 확대 · 화면 저장 | 더블탭 2배, 핀치 1~4배, 끌어서 이동, 사진 앱/다운로드 저장 | 운영 중 | [app](docs/app.md) |
+| Pi 카메라 | 화각 62°(센서 모드 지정), 날짜/시각 표시 | 운영 중 | [picam](docs/picam.md) |
+| Pi 카메라 멈춤 복구 | 5초 무응답 감지 → 카메라 다시 열기 → 안 되면 서비스 재시작, 웹 배너 | 운영 중 (실제 센서 멈춤에서의 복구는 미확인) | [picam](docs/picam.md) |
+| 팬틸트 | 코사인 가감속으로 부드럽게 이동, 위치 저장 | 운영 중 | [pan_tilt](docs/pan_tilt.md) |
+| Tapo 연동 | RTSP 영상·소리, ONVIF PTZ | 운영 중 | [tapo](docs/tapo.md) |
+| 실시간 소리 | WebRTC, Pi USB 마이크 / Tapo 마이크, iOS 지원 | 운영 중 | [audio](docs/audio.md) |
+| 24시간 녹화 | 10분 MP4, 3일 보관, 공간 부족 시 자동 정리, 웹 재생·다운로드 | 운영 중 | [recorder](docs/recorder.md) |
+| 움직임 감지 | 흔들림 보정 프레임 비교, 녹화 목록에 표시 | 운영 중 | [motion](docs/motion.md) |
+| 로그 · 오류 알림 | 목적별 로그 파일, 작업 자동 재시작, 오류 목록 페이지 | 운영 중 | [applog](docs/applog.md) |
+| 보안 | Tailscale HTTPS 전용, 로그인, 버튼 API 인증 | 운영 중 | [app](docs/app.md) |
+| 하드웨어 안정화 | Pi 카메라 센서 가끔 멈춤, 서보 I2C 통신 오류 (서보 전원 분리 검토) | 미해결 | [troubleshooting](docs/troubleshooting.md) |
+| 객체 인식 | 고양이/사람 구분 (움직임이 있을 때만 YOLO 등) | 계획 | |
+| 양방향 소리 | 폰 마이크로 말하기 (라즈베리파이 스피커 필요) | 계획 | |
+
+문제 해결 과정은 [docs/troubleshooting.md](docs/troubleshooting.md)에 정리했다.
+
+## 시작하기
+
+### 준비물
+
+- Raspberry Pi 4, Raspberry Pi OS (Bookworm)
+- Pi 카메라 + Arducam B0283 팬틸트 (I2C 켜기), USB 마이크
+- 녹화용 USB 저장소 (ext4, `/mnt/cctv`)
+- Tailscale 계정
+- (선택) Tapo C210 + Tapo 앱에서 만든 카메라 계정
+
+### 설치
+
 ```bash
-# 1. 시스템 패키지
-sudo apt install python3-flask python3-dotenv python3-opencv python3-numpy python3-picamera2 libportaudio2
-
-# 2. pip 패키지
+sudo apt install python3-flask python3-dotenv python3-opencv python3-numpy python3-picamera2 libportaudio2 ffmpeg
 pip install -r requirements.txt --break-system-packages
-
-# 3. I2C 켜기 (Interface Options -> I2C)
-sudo raspi-config
+sudo raspi-config   # Interface Options → I2C 켜기
 ```
 
-`onvif-zeep`는 WSDL 파일을 `~/.local/lib/python3.4/site-packages/wsdl`에 설치함 (`tapo.py`의 기본 경로).
-다른 곳에 있으면 환경 변수 `ONVIF_WSDL_DIR`로 지정.
+### 설정 (`.env`)
 
-녹화용 USB는 ext4로 포맷하고 `/etc/fstab`에 등록 (빠져 있어도 부팅되도록 `nofail`):
-```
-UUID=<USB 파티션 UUID>  /mnt/cctv  ext4  defaults,noatime,nofail,x-systemd.device-timeout=10s  0  2
-```
-녹화 파일은 `/mnt/cctv/recordings/{pi,tapo}/`에 저장되고, USB가 연결돼 있지 않으면 녹화하지 않음.
-
-USB 마이크 장치 번호는 `app.py`의 `AUDIO_DEVICE`로 지정 (`python -c "import sounddevice as sd; print(sd.query_devices())"`로 확인).
-
-## 설정 (`.env`)
 ```
 SECRET_KEY=<임의의 긴 문자열>
 MICHAEL_PASSWORD=<로그인 비밀번호>
@@ -78,40 +135,24 @@ NATALIA_PASSWORD=<로그인 비밀번호>
 
 # Tapo 카메라 (없으면 Pi 카메라만 사용)
 TAPO_IP=<카메라 고정 IP>
-TAPO_USER=<Tapo 앱에서 만든 카메라 계정>
+TAPO_USER=<카메라 계정>
 TAPO_PASSWORD=<카메라 계정 비밀번호>
 ```
 
-## 실행
+### 실행
+
 ```bash
-python app.py
+python app.py                                                  # 127.0.0.1:5000
+sudo tailscale serve --bg --https=443 http://127.0.0.1:5000     # 처음 한 번 (MagicDNS, HTTPS 인증서 켠 뒤)
 ```
 
-웹 서버는 `127.0.0.1:5000`에서만 열리고, Tailscale HTTPS로 접속함.
-Tailscale 관리 페이지에서 MagicDNS와 HTTPS Certificates를 켠 뒤 한 번만 실행:
+접속: `https://<기기 이름>.<tailnet 이름>.ts.net`
+
+부팅 시 자동 실행(systemd 서비스), 녹화 USB의 `/etc/fstab`, Tailscale·공유기 설정처럼 저장소 밖에 있는 설정은
+[docs/troubleshooting.md의 0번](docs/troubleshooting.md#0-git에-남지-않는-설정)에 모두 적어뒀다.
+
 ```bash
-sudo tailscale serve --bg --https=443 http://127.0.0.1:5000
-```
-접속 주소: `https://<기기 이름>.<tailnet 이름>.ts.net`
-
-부팅 시 자동 실행은 systemd 서비스(`/etc/systemd/system/cctv.service`)로 설정:
-```ini
-[Unit]
-Description=M&N Home CCTV Service
-After=network.target
-
-[Service]
-User=michael
-Group=michael
-WorkingDirectory=/home/michael/project/Home-CCTV
-ExecStart=/usr/bin/python -u /home/michael/project/Home-CCTV/app.py
-Restart=always
-RestartSec=5
-
-# 종료 신호는 앱에만 보내고, 앱이 녹화 파일을 닫은 뒤 ffmpeg를 정리함
-KillMode=mixed
-TimeoutStopSec=60
-
-[Install]
-WantedBy=multi-user.target
+sudo systemctl restart cctv     # 서비스 재시작
+journalctl -u cctv -f           # 서비스 로그
+tail -f logs/error.log          # 경고/오류만
 ```
