@@ -12,11 +12,10 @@ from applog import supervised_thread
 
 log = logging.getLogger("pan-tilt")
 
-# MIN_PULSE = 143  # 최소 펄스 길이 (0도, 700μs @ 50Hz, 143 = 700 * 4096 / 20000)
-# MAX_PULSE = 471  # 최대 펄스 길이 (90도, 2300μs @ 50Hz, 471 = 2300 * 4096 / 20000)
-
-MIN_PULSE = 123  # 최소 펄스 길이 (0도, 600μs @ 50Hz, 123 = 700 * 4096 / 20000)
-MAX_PULSE = 492  # 최대 펄스 길이 (90도, 2400μs @ 50Hz, 492 = 2300 * 4096 / 20000)
+# PCA9685 펄스 길이 (12bit tick, 50Hz에서 1 tick = 20000μs / 4096 ≈ 4.88μs)
+# 코드의 각도 0~90을 이 범위에 대응시킴. 실제 회전은 150° 이상 (명령 10° ≈ 실제 17°)
+MIN_PULSE = 123  # 600μs  (123 = 600 * 4096 / 20000)
+MAX_PULSE = 492  # 2400μs (492 = 2400 * 4096 / 20000)
 
 DEFAULT_TILT = 45
 DEFAULT_PAN = 45

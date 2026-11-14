@@ -364,5 +364,4 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, _shutdown)
 
     # Tailscale HTTPS(tailscale serve)를 거친 요청만 받도록 라즈베리파이 내부에서만 열어둠
-    # 접속 주소: https://raspberrypi.tailae04df.ts.net
     app.run(host="127.0.0.1", port="5000", debug=False, threaded=True)
