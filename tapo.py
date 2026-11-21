@@ -1,5 +1,6 @@
 import logging
 import os
+import socket
 import time
 from threading import Thread, Lock
 from urllib.parse import quote
@@ -23,6 +24,11 @@ RECORD_STREAM = "stream1"  # 녹화용 2304x1296
 
 EVENTS_NS = "http://www.onvif.org/ver10/events/wsdl"
 PULLPOINT_KEY = EVENTS_NS + "/PullPointSubscription"
+
+# 카메라 네트워크 상태 확인 (끊긴 이유 구분용)
+WATCH_INTERVAL = 2         # 이 간격(초)으로 RTSP 포트에 접속했다 바로 닫아봄
+OFFLINE_RECENT = 60        # 영상이 끊겼을 때 이 시간(초) 안에 응답 없던 적이 있으면 Wi-Fi 끊김으로 봄
+OFFLINE_REASON = "카메라가 네트워크에서 응답하지 않음 (Wi-Fi 끊김 의심)"
 
 # ONVIF 좌표(-1 ~ 1)를 각도로 변환하기 위한 C210 스펙 (좌우 360도, 상하 114도)
 PAN_DEG_PER_UNIT = 360.0 / 2.0
@@ -57,6 +63,21 @@ def connect_onvif(ip, user, password):
     return cam
 
 
+def probe_rtsp(host, port=RTSP_PORT, timeout=2):
+    """연결이 끊긴 이유를 구분하려고 카메라 RTSP 포트에 직접 연결해봄"""
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return "카메라는 응답하지만 영상이 끊김"
+    except ConnectionRefusedError:
+        return "카메라가 연결을 거부함 (재부팅 중일 수 있음)"
+    except OSError:
+        return OFFLINE_REASON
+
+
+def camera_offline(reason):
+    return reason == OFFLINE_REASON
+
+
 class TapoCamera:
     """RTSP 영상은 전용 스레드로 계속 받아오고, PTZ는 ONVIF로 제어"""
 
@@ -73,6 +94,7 @@ class TapoCamera:
         self._ptz = None
         self._token = None
         self.last_move = 0.0  # 마지막으로 PTZ를 움직인 시각 (움직임 감지에서 사용)
+        self.last_offline = 0.0  # 마지막으로 카메라가 네트워크에서 응답하지 않은 시각
         self.stopped = False
 
     def stream_url(self, stream):
@@ -92,7 +114,21 @@ class TapoCamera:
     def start(self):
         self.stopped = False
         supervised_thread("tapo-camera", self.get)
+        supervised_thread("tapo-network", self._watch_network)
         return self
+
+    def _watch_network(self):
+        """OpenCV는 연결이 끊긴 걸 한참 뒤에야 알아채서, 그때 확인하면 카메라 Wi-Fi가 이미 돌아와 있을 수 있음.
+        그래서 2초마다 확인해서 마지막으로 응답이 없던 시각을 기억해둠"""
+        while not self.stopped:
+            if camera_offline(probe_rtsp(self.ip)):
+                self.last_offline = time.time()
+            time.sleep(WATCH_INTERVAL)
+
+    def _disconnect_reason(self):
+        if time.time() - self.last_offline < OFFLINE_RECENT:
+            return OFFLINE_REASON
+        return probe_rtsp(self.ip)
 
     def get(self):
         disconnected_at = None
@@ -110,10 +146,10 @@ class TapoCamera:
                     self._frame = new_frame
             cap.release()
             if not self.stopped:
-                # 연결이 끊기면 안내 화면을 보여주고 재연결 (끊긴 순간에 한 번만 기록)
+                # 연결이 끊기면 안내 화면을 보여주고 재연결 (끊긴 순간에 이유와 함께 한 번만 기록)
                 if disconnected_at is None:
                     disconnected_at = time.time()
-                    log.warning("Tapo 영상 연결이 끊김, 다시 연결 시도 중")
+                    log.warning(f"Tapo 영상 연결이 끊김: {self._disconnect_reason()}")
                 with self._lock:
                     self._frame = self._placeholder("Tapo disconnected. Reconnecting...")
                 time.sleep(3)

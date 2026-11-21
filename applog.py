@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -19,6 +20,20 @@ ERRORS_JSONL = os.path.join(LOG_DIR, "errors.jsonl")
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 log = logging.getLogger("cctv")
+
+# RTSP 주소에 들어 있는 카메라 계정(아이디:비밀번호)을 가림. ffmpeg 등이 오류 메시지에 주소를 그대로 찍음
+_RTSP_CREDENTIALS = re.compile(r"(rtsp://)[^/\s]*@")  # 주소의 계정 부분 전체(마지막 @까지)
+
+
+def redact(text):
+    return _RTSP_CREDENTIALS.sub(r"\1***@", text)
+
+
+class _RedactingFormatter(logging.Formatter):
+    """모든 로그 출력(콘솔, 파일)에서 RTSP 계정을 가림 (메시지와 Traceback 모두)"""
+
+    def format(self, record):
+        return redact(super().format(record))
 
 
 class _NoAccessLog(logging.Filter):
@@ -35,10 +50,10 @@ class _JsonFormatter(logging.Formatter):
             "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.created)),
             "level": record.levelname,
             "source": record.name,
-            "message": record.getMessage(),
+            "message": redact(record.getMessage()),
         }
         if record.exc_info:
-            entry["detail"] = "".join(traceback.format_exception(*record.exc_info))
+            entry["detail"] = redact("".join(traceback.format_exception(*record.exc_info)))
         return json.dumps(entry, ensure_ascii=False)
 
 
@@ -50,17 +65,17 @@ def setup_logging():
         root.removeHandler(handler)
 
     console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    console.setFormatter(_RedactingFormatter("%(levelname)s %(name)s: %(message)s"))
     root.addHandler(console)
 
     app_file = RotatingFileHandler(os.path.join(LOG_DIR, "app.log"), maxBytes=5 * 1024 * 1024, backupCount=5)
-    app_file.setFormatter(logging.Formatter(FORMAT))
+    app_file.setFormatter(_RedactingFormatter(FORMAT))
     app_file.addFilter(_NoAccessLog())
     root.addHandler(app_file)
 
     error_file = RotatingFileHandler(os.path.join(LOG_DIR, "error.log"), maxBytes=2 * 1024 * 1024, backupCount=5)
     error_file.setLevel(logging.WARNING)
-    error_file.setFormatter(logging.Formatter(FORMAT))
+    error_file.setFormatter(_RedactingFormatter(FORMAT))
     root.addHandler(error_file)
 
     json_file = RotatingFileHandler(ERRORS_JSONL, maxBytes=2 * 1024 * 1024, backupCount=2)

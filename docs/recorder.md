@@ -13,7 +13,7 @@
 |---|---|
 | `storage_ready()` | `/mnt/cctv`에 USB가 연결돼 있는지. 없으면 녹화하지 않음 (SD 카드 보호) |
 | `segment_args(cam)` | 10분 단위로 파일을 나누는 ffmpeg 옵션 |
-| `TapoRecorder` | Tapo RTSP를 ffmpeg로 그대로 저장. 끊기면 5초 뒤 다시 시작 |
+| `TapoRecorder` | Tapo RTSP를 ffmpeg로 그대로 저장. 끊기면 5초 뒤 다시 시작, 끊긴 이유 기록 |
 | `FfmpegAudioOutput` | Picamera2 출력 클래스 확장: H.264 영상 + 마이크 소리를 함께 ffmpeg로 |
 | `PiRecorder` | Pi 카메라 하드웨어 인코더로 녹화. 카메라 복구 중엔 잠깐 멈췄다 이어감 |
 | `stop_all()` | 서비스 종료 시 모든 녹화를 정상 종료 |
@@ -49,6 +49,14 @@
 - `reset_timestamps 1`: 각 파일이 0초부터 시작해 따로 재생 가능.
 
 **faststart를 쓰지 않는 이유**: MP4는 재생 정보(moov, 목차)가 있어야 재생된다. `movflags=+faststart`는 파일을 닫을 때 moov를 앞으로 옮기려고 파일 전체(약 100MB)를 다시 쓰는데, 그동안 ffmpeg가 5~10초 막혀 Pi 카메라까지 멈췄다 (`docs/troubleshooting.md` 1번). 지금은 moov가 파일 끝에 붙고, 브라우저는 HTTP Range 요청으로 끝부분을 먼저 읽어 재생한다.
+
+### 2-1. Tapo 녹화가 끊길 때
+
+- ffmpeg 오류 출력(stderr)은 RTSP 주소를 그대로 찍는데, 주소에 카메라 계정이 들어 있다. 그래서 서비스 로그로 바로 보내지 않고 앱이 받아서 계정을 `rtsp://***@`로 가린 뒤 마지막 몇 줄만 보관한다.
+- 처음 끊긴 순간에만 한 줄 기록한다: `tapo.probe_rtsp`로 구한 이유 + 가린 ffmpeg 메시지 (예: `Connection timed out`).
+  - 카메라가 네트워크에서 사라진 경우는 실시간 영상 쪽이 같은 원인을 경고로 남기므로 일반 기록(INFO)으로만.
+  - 카메라는 응답하는데 녹화만 실패하면 경고(WARNING).
+- 끊긴 동안의 재시도(5초마다)는 기록하지 않는다. 다시 시작한 녹화가 15초 넘게 이어지면 "다시 시작됨 (N초 끊김, 재시도 M번)"을 한 줄 남긴다.
 
 ### 3. Pi 녹화: 영상과 소리를 하나로
 

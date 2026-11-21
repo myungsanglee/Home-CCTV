@@ -7,15 +7,18 @@ import signal
 import struct
 import subprocess
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from threading import Thread
+from urllib.parse import urlsplit
 
 import prctl
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FfmpegOutput
 from picamera2.outputs.output import Output
 
-from applog import supervised_thread
+from applog import redact, supervised_thread
+from tapo import camera_offline, probe_rtsp
 
 log = logging.getLogger("recorder")
 
@@ -28,6 +31,7 @@ KEEP_DAYS = 3
 MIN_FREE_BYTES = 10 * 1024 ** 3  # 남은 공간이 10GB 아래면 3일이 안 됐어도 오래된 것부터 삭제
 PI_BITRATE = 1_500_000
 PI_AUDIO_RATE = 48000
+TAPO_RECOVERED_AFTER = 15  # 다시 시작한 Tapo 녹화가 이 시간(초) 넘게 이어지면 복구된 것으로 봄
 
 FILENAME_RE = re.compile(r"^(\d{8}_\d{6})\.mp4$")
 WRITING_GRACE_SECONDS = 30  # 이 시간 안에 수정된 파일은 아직 녹화 중으로 보고 목록에서 뺌
@@ -109,7 +113,18 @@ class TapoRecorder:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    @staticmethod
+    def _read_errors(proc, errors):
+        # ffmpeg 오류 출력은 RTSP 주소(카메라 계정 포함)를 그대로 찍어서, 서비스 로그로 바로 보내지 않고
+        # 앱이 받아서 계정을 가린 뒤 마지막 몇 줄만 끊긴 이유로 씀
+        for line in proc.stderr:
+            line = redact(line.strip())
+            if line:
+                errors.append(line)
+
     def _run(self):
+        host = urlsplit(self.rtsp_url).hostname
+        down_since, retries = None, 0
         while not self._stopping:
             if not storage_ready():
                 _warn_no_storage_once_per_hour()
@@ -122,11 +137,35 @@ class TapoRecorder:
                 "-i", self.rtsp_url,
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "32k",
             ] + segment_args("tapo")
-            self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, preexec_fn=_kill_with_parent)
-            code = self._proc.wait()
-            if not self._stopping:
-                log.warning(f"Tapo 녹화(ffmpeg)가 끝남 (종료 코드 {code}), 5초 뒤 다시 시작")
-            # 연결이 끊기거나 USB가 빠지면 잠시 후 다시 시작
+            self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                          text=True, errors="replace", preexec_fn=_kill_with_parent)
+            errors = deque(maxlen=5)
+            reader = Thread(target=self._read_errors, args=(self._proc, errors), daemon=True)
+            reader.start()
+            try:
+                code = self._proc.wait(timeout=TAPO_RECOVERED_AFTER)
+            except subprocess.TimeoutExpired:
+                # 녹화가 이어지고 있음: 끊겨 있었다면 복구 기록을 한 줄 남김
+                if down_since is not None:
+                    log.info(f"Tapo 녹화 다시 시작됨 ({time.time() - down_since:.0f}초 끊김, 재시도 {retries}번)")
+                    down_since, retries = None, 0
+                code = self._proc.wait()
+            reader.join(timeout=2)
+            if self._stopping:
+                break
+            # 끊긴 동안 5초마다 하는 재시도는 기록하지 않고, 처음 끊긴 순간만 이유와 함께 기록
+            if down_since is None:
+                down_since = time.time()
+                reason = probe_rtsp(host)
+                detail = errors[-1] if errors else f"종료 코드 {code}"
+                message = f"Tapo 녹화가 끊김: {reason} (ffmpeg: {detail})"
+                if camera_offline(reason):
+                    # 카메라가 네트워크에서 사라진 경우는 실시간 영상 쪽(tapo)이 같은 원인을 경고로 남김
+                    log.info(message)
+                else:
+                    log.warning(message)
+            else:
+                retries += 1
             time.sleep(5)
 
 
