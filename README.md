@@ -25,8 +25,9 @@ flowchart LR
         PC["picam.py<br/>캡처 · 멈춤 복구"]
         TC["tapo.py<br/>RTSP · ONVIF PTZ"]
         PT["pan_tilt.py<br/>부드러운 이동"]
-        MJ["mjpeg.py<br/>MJPEG"]
+        WV["webrtc_video.py + aiortc<br/>WebRTC 영상 (H.264 그대로)"]
         AU["audio.py + aiortc<br/>WebRTC 소리"]
+        MJ["mjpeg.py<br/>예비 MJPEG"]
         MO["motion.py<br/>움직임 감지"]
         RE["recorder.py<br/>ffmpeg 10분 분할"]
         LG["applog.py<br/>로그 · 작업 감시"]
@@ -41,6 +42,8 @@ flowchart LR
 
     B -- "WireGuard + HTTPS" --> TS
     TS --> F
+    TC -- "H.264 패킷" --> WV
+    RE -- "H.264 (인코더 나눠 씀)" --> WV
     PC --> MJ
     TC --> MJ
     PC --> MO
@@ -49,7 +52,7 @@ flowchart LR
     AU --> RE
     RE --> USB
     MO --> USB
-    F --> MJ & AU & PT & TC & RE
+    F --> WV & AU & MJ & PT & TC & RE
 ```
 
 ## 기술 스택
@@ -60,7 +63,7 @@ flowchart LR
 | 언어 | Python 3.11, JavaScript | |
 | 웹 | Flask, Bootstrap 5, python-dotenv | 서버, 세션 로그인, 화면 |
 | 카메라 | Picamera2(libcamera), OpenCV | Pi 카메라 캡처·H.264 인코딩, 이미지 처리 |
-| 실시간 영상 | MJPEG (`multipart/x-mixed-replace`) | `<img>` 한 줄로 재생 |
+| 실시간 영상 | WebRTC (aiortc), H.264 그대로 전달, 예비 MJPEG | Pi 약 1.5Mbps, Tapo 약 0.2Mbps (MJPEG 때 52/30Mbps) |
 | 실시간 소리 | WebRTC (aiortc), sounddevice(PortAudio), PyAV | 지연 0.1~0.5초 |
 | Tapo 연동 | RTSP, ONVIF (onvif-zeep) | 영상·소리 수신, PTZ |
 | 녹화 | ffmpeg (segment, `-c:v copy`) | 10분 MP4, 재인코딩 없음 |
@@ -77,7 +80,8 @@ Home-CCTV/
 ├── pan_tilt.py         # 팬틸트 서보, 부드러운 이동, 위치 저장
 ├── recorder.py         # 24시간 녹화, 3일 보관 정리, 녹화 목록
 ├── motion.py           # 움직임 감지 (흔들림 보정 프레임 비교)
-├── mjpeg.py            # 실시간 영상 (프레임당 JPEG 한 번만 인코딩)
+├── webrtc_video.py     # 실시간 영상 WebRTC (압축된 H.264를 그대로 전달)
+├── mjpeg.py            # 예비 실시간 영상 MJPEG (프레임당 JPEG 한 번만 인코딩)
 ├── audio.py            # 소리 나눠 보내기 (실시간 듣기, 녹화)
 ├── applog.py           # 로그 파일, 백그라운드 작업 자동 재시작
 ├── templates/          # 로그인, 실시간, 녹화, 오류 페이지
@@ -91,7 +95,7 @@ Home-CCTV/
 
 | 기능 | 설명 | 상태 | 문서 |
 |---|---|---|---|
-| 실시간 영상 | 두 카메라 MJPEG, 탭 전환, 시청자가 늘어도 인코딩은 한 번 | 운영 중 | [mjpeg](docs/mjpeg.md) |
+| 실시간 영상 | WebRTC로 H.264를 다시 압축하지 않고 전달 (Pi는 녹화 인코더 나눠 씀), 탭 전환, 끊기면 마지막 화면 유지하며 재연결, 실패 시 MJPEG | 운영 중 | [webrtc_video](docs/webrtc_video.md), [mjpeg](docs/mjpeg.md) |
 | 영상 확대 · 화면 저장 | 더블탭 2배, 핀치 1~4배, 끌어서 이동, 사진 앱/다운로드 저장 | 운영 중 | [app](docs/app.md) |
 | Pi 카메라 | 화각 62°(센서 모드 지정), 날짜/시각 표시 | 운영 중 | [picam](docs/picam.md) |
 | Pi 카메라 멈춤 복구 | 5초 무응답 감지 → 카메라 다시 열기 → 안 되면 서비스 재시작, 웹 배너 | 운영 중 (실제 센서 멈춤에서의 복구는 미확인) | [picam](docs/picam.md) |

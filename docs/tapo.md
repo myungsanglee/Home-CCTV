@@ -3,9 +3,9 @@
 ## 역할
 
 TP-Link Tapo C210 카메라를 Tapo 앱 대신 이 웹에서 쓰게 한다.
-- **영상**: RTSP로 받아 실시간 화면(720p)과 움직임 감지에 공급. 녹화는 `recorder.TapoRecorder`가 고화질(2304x1296) 스트림으로 따로 받음
+- **영상**: RTSP로 받아 움직임 감지와 예비 MJPEG 화면에 공급(`TapoCamera`). 실시간 화면은 `TapoLive`가 H.264를 그대로 WebRTC로 넘김 (`docs/webrtc_video.md`). 녹화는 `recorder.TapoRecorder`가 고화질(2304x1296) 스트림으로 따로 받음
 - **PTZ**: ONVIF로 좌우·위아래 이동, Center
-- **마이크**: RTSP의 소리만 꺼내 실시간 듣기에 공급 (`docs/audio.md`)
+- **마이크**: RTSP의 소리를 꺼내 실시간 듣기에 공급 (`docs/audio.md`)
 
 **왜 Tapo 앱 대신 직접 붙였나**: 보안 때문이다. 영상은 집 안 네트워크(RTSP)로만 받고 웹은 Tailscale로만 열어서, TP-Link 클라우드나 앱을 거치지 않고 볼 수 있다. 공유기에서 카메라의 인터넷을 차단해도 RTSP/ONVIF는 집 안 통신이라 계속 동작한다.
 
@@ -17,7 +17,7 @@ TP-Link Tapo C210 카메라를 Tapo 앱 대신 이 웹에서 쓰게 한다.
 | `connect_onvif(ip, user, password)` | ONVIF 연결 + 라이브러리가 몰래 만든 이벤트 구독 해지 |
 | `probe_rtsp(host)` | 끊긴 이유를 구분하려고 RTSP 포트(554)에 직접 연결해봄 |
 | `TapoCamera` | RTSP 영상 수신 스레드, 최신 프레임, PTZ (`move`, `center`), `last_move` |
-| `TapoAudio` | 듣는 사람이 있을 때만 RTSP 소리 수신 (`AudioFanout` 상속) |
+| `TapoLive` | 보거나 듣는 사람이 있을 때만 stream2에 연결해서 영상(H.264 그대로)과 소리를 나눠 줌 |
 
 ## 사용 라이브러리와 선택 이유
 
@@ -25,7 +25,7 @@ TP-Link Tapo C210 카메라를 Tapo 앱 대신 이 웹에서 쓰게 한다.
 |---|---|---|
 | **OpenCV `VideoCapture`** | RTSP 영상 받기·디코딩 | 프레임을 바로 NumPy 배열로 받아 다른 모듈과 형식이 같음 |
 | **onvif-zeep** | ONVIF(SOAP) 호출 | 카메라 표준 제어 프로토콜을 파이썬으로 호출 |
-| **PyAV** | RTSP 소리만 디코딩·리샘플 | 영상은 디코딩하지 않고 소리 패킷만 처리할 수 있음 |
+| **PyAV** | 실시간 보기용 RTSP 패킷 꺼내기, 소리 디코딩·리샘플 | 영상은 디코딩하지 않고 압축된 패킷 그대로 꺼낼 수 있음 |
 
 ## 동작 원리
 
@@ -78,9 +78,11 @@ onvif-zeep의 `ONVIFCamera()`는 생성될 때 내부에서 **만료 시간 없�
 
 지금은 Tapo 움직임 감지도 화면 비교 방식이라 이벤트 구독을 쓰지 않지만, PTZ 연결도 `ONVIFCamera()`를 만들기 때문에 이 함수를 계속 쓴다.
 
-### 5. Tapo 마이크
+### 5. 실시간 영상과 마이크 (`TapoLive`)
 
-`docs/audio.md` 6번 참고. 듣는 사람이 있을 때만 RTSP에 따로 연결해 소리 패킷만 디코딩한다.
+보거나 듣는 사람이 생기면 stream2에 RTSP로 하나 연결한다. 영상 패킷은 디코딩하지 않고 `H264Fanout`으로(`docs/webrtc_video.md`), 소리는 디코딩·리샘플해서 `AudioFanout`으로 넘긴다(`docs/audio.md` 6번). 아무도 없으면 연결을 끊는다. 키프레임 앞에 SPS/PPS가 없으면 연결 정보(`extradata`)에서 붙인다.
+
+실시간 보기 중에는 카메라 RTSP 연결이 3개가 된다 (`TapoCamera`, 녹화, `TapoLive`). C210에서 동시에 동작함을 확인했다.
 
 ## 한계
 

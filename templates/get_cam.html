@@ -45,7 +45,11 @@
         {% endif %}
 
         <div class="video-wrap rounded my-3" id="videoWrap">
-            <img class="img-fluid d-block" id="videoFeed" src="{{ url_for('video_feed') }}">
+            <!-- 확대/이동은 안쪽 div에 적용 (영상이 WebRTC <video>든 예비 MJPEG <img>든 똑같이 동작) -->
+            <div id="videoInner">
+                <video class="img-fluid d-block" id="videoFeed" width="1280" height="720" autoplay muted playsinline></video>
+                <img class="img-fluid d-block d-none" id="mjpegFeed" width="1280" height="720" alt="">
+            </div>
         </div>
 
         <div class="container">
@@ -149,7 +153,8 @@
                 currentCam = cam;
                 localStorage.setItem('cam', cam);
                 resetZoom();
-                document.getElementById('videoFeed').src = VIDEO_FEEDS[cam];
+                videoFailures = 0;
+                startVideo('카메라선택');
                 // 소리를 듣는 중이면 새 카메라의 마이크로 다시 연결
                 if (pc) {
                     toggleAudio();
@@ -165,7 +170,7 @@
             const DOUBLE_TAP_ZOOM = 2;
             const MAX_ZOOM = 4;
             const videoWrap = document.getElementById('videoWrap');
-            const videoImg = document.getElementById('videoFeed');
+            const videoInner = document.getElementById('videoInner');
             const zoom = { scale: 1, tx: 0, ty: 0 };
 
             function applyZoom() {
@@ -173,7 +178,7 @@
                 // 영상 가장자리 밖으로 끌려 나가지 않도록 이동 범위 제한
                 zoom.tx = Math.min(0, Math.max(videoWrap.clientWidth * (1 - s), zoom.tx));
                 zoom.ty = Math.min(0, Math.max(videoWrap.clientHeight * (1 - s), zoom.ty));
-                videoImg.style.transform = s > 1 ? `translate(${zoom.tx}px, ${zoom.ty}px) scale(${s})` : '';
+                videoInner.style.transform = s > 1 ? `translate(${zoom.tx}px, ${zoom.ty}px) scale(${s})` : '';
                 videoWrap.classList.toggle('zoomed', s > 1);
             }
 
@@ -392,12 +397,16 @@
             // 지금 보고 있는 카메라 화면을 원본 해상도로 저장 (확대 여부와 상관없이 전체 화면)
             // 모바일은 공유 창의 "이미지 저장"으로 사진 앱에 저장, PC는 파일로 다운로드
             function saveSnapshot() {
-                const img = document.getElementById('videoFeed');
-                if (!img.naturalWidth) return;
+                // 지금 보이는 쪽(WebRTC 영상 또는 예비 MJPEG)에서 한 장을 그림
+                const usingMjpeg = !mjpegEl.classList.contains('d-none');
+                const source = usingMjpeg ? mjpegEl : videoEl;
+                const width = usingMjpeg ? mjpegEl.naturalWidth : videoEl.videoWidth;
+                const height = usingMjpeg ? mjpegEl.naturalHeight : videoEl.videoHeight;
+                if (!width) return;
                 const canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-                canvas.getContext('2d').drawImage(img, 0, 0);
+                canvas.width = width;
+                canvas.height = height;
+                canvas.getContext('2d').drawImage(source, 0, 0, width, height);
 
                 const now = new Date();
                 const pad = (n) => String(n).padStart(2, '0');
@@ -469,6 +478,127 @@
                 btn.innerHTML = '<span class="bi bi-volume-up"></span>';
                 btn.classList.replace('btn-outline-secondary', 'btn-success');
             }
+
+            // 실시간 영상: WebRTC로 H.264를 받음 (MJPEG보다 용량이 수십 배 작음)
+            // 연결이 끊기면 다시 연결하고, 3번 연속 실패하면 예비 MJPEG로 보여줌
+            // 다시 연결하는 동안에는 마지막 화면을 그대로 두고, 새 영상이 실제로 들어올 때 바꿔 끼움 (검은 화면 방지)
+            // 주소에 ?mjpeg 를 붙이면 처음부터 MJPEG
+            const videoEl = document.getElementById('videoFeed');
+            const mjpegEl = document.getElementById('mjpegFeed');
+            const FORCE_MJPEG = new URLSearchParams(location.search).has('mjpeg');
+            const FIRST_FRAME_TIMEOUT = 10000;  // 이 시간 안에 첫 화면이 안 나오면 실패로 봄
+            const DISCONNECT_GRACE = 5000;      // 'disconnected'는 잠깐의 Wi-Fi 끊김이면 저절로 돌아오므로 이만큼 기다림
+            const RETRY_DELAY = 2000;
+            const MAX_FAILURES = 3;
+            let videoPc = null;
+            let videoFailures = 0;
+            let retryTimer = null;
+            let firstFrameTimer = null;
+            let disconnectTimer = null;
+
+            function showMjpeg(on) {
+                mjpegEl.classList.toggle('d-none', !on);
+                videoEl.classList.toggle('d-none', on);
+                // 안 보일 때는 주소를 비워서 MJPEG 연결(큰 용량)을 끊음
+                if (on) mjpegEl.src = VIDEO_FEEDS[currentCam];
+                else mjpegEl.removeAttribute('src');
+            }
+
+            // keepFrame: 다시 연결할 때는 마지막 화면을 남겨둠 (카메라를 바꿀 때만 지움)
+            function stopVideo(keepFrame = false) {
+                clearTimeout(retryTimer);
+                clearTimeout(firstFrameTimer);
+                clearTimeout(disconnectTimer);
+                if (videoPc) {
+                    videoPc.close();
+                    videoPc = null;
+                }
+                if (!keepFrame) videoEl.srcObject = null;
+            }
+
+            function videoFailed(pc, why) {
+                if (pc !== videoPc) return;  // 이미 다른 연결로 바뀜
+                stopVideo(true);
+                videoFailures += 1;
+                if (videoFailures >= MAX_FAILURES) {
+                    console.warn('WebRTC 영상 연결 실패, MJPEG로 전환');
+                    showMjpeg(true);
+                    return;
+                }
+                retryTimer = setTimeout(() => startVideo(`재연결:${why}`, true), RETRY_DELAY);
+            }
+
+            async function startVideo(reason = '시작', keepFrame = false) {
+                stopVideo(keepFrame);
+                if (FORCE_MJPEG || document.hidden) {
+                    if (FORCE_MJPEG) showMjpeg(true);
+                    return;
+                }
+                showMjpeg(false);
+                const pc = new RTCPeerConnection();
+                videoPc = pc;
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.ontrack = (event) => {
+                    const stream = event.streams[0] || new MediaStream([event.track]);
+                    // 영상 데이터가 실제로 들어오기 시작할 때(unmute) 바꿔 끼워서, 그 전까지 이전 화면을 유지
+                    const attach = () => {
+                        if (pc !== videoPc) return;
+                        pc.attached = true;
+                        videoEl.srcObject = stream;
+                        videoEl.play().catch(() => {});
+                    };
+                    if (event.track.muted) event.track.addEventListener('unmute', attach, { once: true });
+                    else attach();
+                };
+                pc.onconnectionstatechange = () => {
+                    const state = pc.connectionState;
+                    if (state === 'connected') {
+                        clearTimeout(disconnectTimer);
+                    } else if (state === 'disconnected') {
+                        clearTimeout(disconnectTimer);
+                        disconnectTimer = setTimeout(() => {
+                            if (pc.connectionState !== 'connected') videoFailed(pc, 'disconnected');
+                        }, DISCONNECT_GRACE);
+                    } else if (state === 'failed' || state === 'closed') {
+                        videoFailed(pc, state);
+                    }
+                };
+                firstFrameTimer = setTimeout(() => {
+                    if (pc === videoPc && !pc.attached) videoFailed(pc, '첫화면없음');
+                }, FIRST_FRAME_TIMEOUT);
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    const response = await fetch('/offer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sdp: offer.sdp, type: offer.type, cam: currentCam, media: 'video', reason })
+                    });
+                    if (!response.ok) throw new Error(`offer ${response.status}`);
+                    const answer = await response.json();
+                    if (pc !== videoPc) return;
+                    await pc.setRemoteDescription(answer);
+                } catch (e) {
+                    console.warn(e);
+                    videoFailed(pc, '요청실패');
+                }
+            }
+
+            // 첫 화면이 나오면 실패 횟수를 초기화
+            videoEl.addEventListener('loadeddata', () => {
+                videoFailures = 0;
+                clearTimeout(firstFrameTimer);
+            });
+
+            // 다른 앱/탭으로 가면 영상 연결을 끊고, 돌아오면 다시 연결 (보지 않을 때 데이터를 쓰지 않음)
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    stopVideo(true);
+                } else if (mjpegEl.classList.contains('d-none')) {
+                    videoFailures = 0;
+                    startVideo('화면복귀', true);
+                }
+            });
 
             setCam(localStorage.getItem('cam') || 'pi');
 

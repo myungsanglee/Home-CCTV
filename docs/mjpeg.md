@@ -1,8 +1,10 @@
-# mjpeg.py — 실시간 영상 스트리밍 (MJPEG)
+# mjpeg.py — 예비 실시간 영상 (MJPEG)
 
 ## 역할
 
-카메라의 최신 프레임을 JPEG로 압축해서 브라우저에 계속 보낸다. 웹 페이지는 `<img src="/video_feed">` 한 줄로 실시간 영상을 보여준다. Pi 카메라와 Tapo 카메라마다 `MjpegStream`이 하나씩 있다.
+카메라의 최신 프레임을 JPEG로 압축해서 브라우저에 계속 보낸다. `<img src="/video_feed">` 한 줄로 실시간 영상을 보여준다. Pi 카메라와 Tapo 카메라마다 `MjpegStream`이 하나씩 있다.
+
+**지금은 예비 경로다.** 실시간 영상은 WebRTC(H.264)로 보낸다 (`docs/webrtc_video.md`). 페이지는 WebRTC가 3번 연속 실패할 때, 또는 주소에 `?mjpeg`를 붙였을 때만 MJPEG를 쓴다.
 
 ## 코드 구조
 
@@ -19,7 +21,9 @@
 | **OpenCV `imencode`** | JPEG 압축 | 프레임이 이미 OpenCV/NumPy 배열 |
 | **Flask `Response`** + 제너레이터 | 끝나지 않는 HTTP 응답 | 별도 스트리밍 서버 없이 기존 웹 서버로 처리 |
 
-**MJPEG를 쓰는 이유**: 브라우저가 `<img>` 태그만으로 재생하고, 별도 플레이어나 JavaScript가 필요 없다. 지연이 짧다. 단점은 프레임마다 JPEG라 H.264보다 데이터가 많다는 것인데, Tailscale로 가족 몇 명이 보는 규모에서는 문제가 되지 않았다. 영상을 WebRTC로 바꾸면 소리와 싱크가 맞고 데이터도 줄지만, 인코딩 부담과 구현 복잡도가 커서 실시간 화면은 MJPEG로 유지했다.
+**처음 MJPEG를 쓴 이유**: 브라우저가 `<img>` 태그만으로 재생하고, 별도 플레이어나 JavaScript가 필요 없다. 지연이 짧다.
+
+**WebRTC로 바꾼 이유**: 프레임마다 JPEG(품질 95)라 Pi 52Mbps, Tapo 30Mbps를 썼다. 버퍼가 없는 방식이라 Wi-Fi 속도가 잠깐만 떨어져도 화면이 멈췄다 (`docs/troubleshooting.md` 16번). 압축된 H.264를 그대로 보내는 WebRTC로 바꿔 1.5Mbps / 0.2Mbps가 됐다. 예비 경로로 쓸 때도 품질은 그대로(OpenCV 기본값 95)다.
 
 ## 동작 원리
 
@@ -68,5 +72,4 @@ Content-Type: image/jpeg
 
 ## 한계
 
-- 영상과 소리(WebRTC)가 다른 경로라 싱크가 조금 어긋날 수 있다.
-- 화질이 JPEG 압축에 따라 결정되고, H.264보다 대역폭을 많이 쓴다.
+- H.264보다 수십 배 많은 대역폭을 써서 Wi-Fi나 모바일 데이터에서 쉽게 버벅인다. 그래서 예비 경로로만 쓴다.

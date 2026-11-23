@@ -3,12 +3,13 @@ import fractions
 import logging
 import os
 import signal
+import time
 from datetime import timedelta
 from functools import wraps
 
 import av
 import sounddevice as sd
-from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
+from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, render_template, Response, request, redirect, url_for, session, flash, send_file
 
@@ -19,7 +20,8 @@ from motion import FrameMotion
 from picam import VideoGet, run_with_timeout
 from pan_tilt import PanTiltServo
 from recorder import CAMERAS, PiRecorder, RecordingCleaner, TapoRecorder, list_recordings, recording_path, stop_all
-from tapo import TapoAudio, TapoCamera
+from tapo import TapoCamera, TapoLive
+from webrtc_video import EncodedVideoTrack, H264Fanout, prefer_h264
 
 load_dotenv()
 
@@ -31,12 +33,18 @@ AUDIO_DEVICE = 1  # sounddevice index: USB PnP Sound Device (hw:3,0)
 SAMPLE_RATE = 48000
 CHUNK_SIZE = 960  # 20ms @ 48kHz
 
+rtc_log = logging.getLogger("webrtc")
+# aioice는 연결마다 후보 주소 확인 과정을 INFO로 수십 줄씩 남김: 경고 이상만 기록
+logging.getLogger("aioice").setLevel(logging.WARNING)
+
 webrtc_loop = asyncio.new_event_loop()
 supervised_thread("webrtc-loop", webrtc_loop.run_forever)
 pcs = set()
 
 # Pi USB 마이크 - 서버 시작 시 한 번만 열고 유지
 pi_audio = AudioFanout()
+# Pi 카메라 실시간 영상 (녹화용 H.264 인코더 출력을 나눠 받음)
+pi_video = H264Fanout()
 
 
 def _pi_audio_callback(indata, frames, time_info, status):
@@ -214,21 +222,39 @@ def offer():
 
     params = request.json
 
+    # media: "video"(실시간 영상) 또는 "audio"(소리 버튼). 둘은 따로 연결함
+    use_tapo = params.get("cam") == "tapo" and tapo_live is not None
+    want_video = params.get("media") == "video"
+    # 연결 시작/끝을 기록해서 화면이 끊기는 원인을 나중에 확인할 수 있게 함
+    # (reason: 브라우저가 이 연결을 왜 새로 만들었는지 - 처음, 탭 전환, 재연결 이유 등)
+    label = f"{'영상' if want_video else '소리'} {'tapo' if use_tapo else 'pi'}"
+    reason = str(params.get("reason", "-"))[:40]
+    rtc_log.info(f"WebRTC {label} 연결 요청 (이유: {reason})")
+    started = time.time()
+
     async def process():
-        pc = RTCPeerConnection()
-        source = tapo_audio if params.get("cam") == "tapo" and tapo_audio else pi_audio
-        mic = MicrophoneTrack(source)
+        # 접속은 항상 Tailscale 안에서 오므로 라즈베리파이 자체 주소(host 후보)로 충분함.
+        # 외부 STUN 서버로 공인 주소를 알아내는 단계를 빼서 연결마다 5초씩 기다리던 것을 없앰
+        pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+        if want_video:
+            track = EncodedVideoTrack(tapo_live.video if use_tapo else pi_video, webrtc_loop)
+        else:
+            track = MicrophoneTrack(tapo_live.audio if use_tapo else pi_audio)
         pcs.add(pc)
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             if pc.connectionState in ("failed", "closed", "disconnected"):
-                mic.stop()
+                if pc in pcs:
+                    rtc_log.info(f"WebRTC {label} 연결 끝 ({pc.connectionState}, {time.time() - started:.0f}초 유지)")
+                track.stop()
                 await pc.close()
                 pcs.discard(pc)
 
-        pc.addTrack(mic)
-
+        pc.addTrack(track)
+        if want_video:
+            # 코덱 선택은 브라우저 제안(offer)을 적용할 때 정해지므로 그 전에 H.264로 고정
+            prefer_h264(pc)
         sdp_offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
         await pc.setRemoteDescription(sdp_offer)
         answer = await pc.createAnswer()
@@ -317,7 +343,7 @@ if __name__ == "__main__":
         tapo = TapoCamera(os.environ["TAPO_IP"], os.environ["TAPO_USER"], os.environ["TAPO_PASSWORD"]).start()
     pi_stream = MjpegStream(picam)
     tapo_stream = MjpegStream(tapo) if tapo else None
-    tapo_audio = TapoAudio(tapo.rtsp_url) if tapo else None
+    tapo_live = TapoLive(tapo.rtsp_url) if tapo else None
     pan_tilt_servo = PanTiltServo()
     per_angle = 5
 
@@ -332,7 +358,7 @@ if __name__ == "__main__":
     global_audio_stream.start()
 
     # 24시간 녹화 (USB /mnt/cctv), 3일 보관
-    PiRecorder(picam, pi_audio).start()
+    PiRecorder(picam, pi_audio, pi_video).start()
     if tapo:
         TapoRecorder(tapo.record_url).start()
     RecordingCleaner().start()

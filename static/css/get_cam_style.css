@@ -27,10 +27,15 @@ body, button, input, label {
     touch-action: pan-x pan-y;
 }
 
-.video-wrap img {
+#videoInner {
     transform-origin: 0 0;
     transition: transform 0.2s ease;
     cursor: zoom-in;
+}
+
+.video-wrap video,
+.video-wrap img {
+    background-color: #000;
     user-select: none;
     -webkit-user-select: none;
     -webkit-user-drag: none;
@@ -42,12 +47,12 @@ body, button, input, label {
     touch-action: none;
 }
 
-.video-wrap.zoomed img {
+.video-wrap.zoomed #videoInner {
     cursor: grab;
 }
 
 /* 끌고 있는 동안에는 애니메이션 없이 손가락을 바로 따라감 */
-.video-wrap.dragging img {
+.video-wrap.dragging #videoInner {
     transition: none;
     cursor: grabbing;
 }

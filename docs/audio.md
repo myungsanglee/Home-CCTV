@@ -12,7 +12,7 @@
 |---|---|
 | `audio.py` `AudioFanout` | 소리 조각을 듣고 있는 모든 곳에 나눠 줌 |
 | `app.py` `MicrophoneTrack`, `/offer` | 나눠 받은 소리를 WebRTC 오디오 트랙으로 브라우저에 보냄 |
-| `tapo.py` `TapoAudio` | Tapo RTSP에서 소리만 꺼내 `AudioFanout`으로 공급 |
+| `tapo.py` `TapoLive` | Tapo RTSP에서 소리를 꺼내 `AudioFanout`으로 공급 (같은 연결로 실시간 영상도 공급) |
 | `templates/get_cam.html` `toggleAudio()` | 브라우저 쪽 WebRTC 연결, iOS 잠금 해제 |
 
 ## 사용 라이브러리와 선택 이유
@@ -45,7 +45,7 @@ USB 마이크는 한 번에 한 프로그램만 열 수 있다. 연결마다 마
 - 콜백은 `pi_audio.dispatch(조각)`으로 등록된 모든 리스너에게 같은 조각을 준다.
 - 실시간 듣기 연결(`MicrophoneTrack`)과 Pi 녹화(`FfmpegAudioOutput`)가 각각 리스너로 붙었다 떨어진다.
 
-`AudioFanout`은 리스너 목록과 잠금만 가진 작은 클래스다. 첫 리스너가 생길 때 `_on_first_listener()`를 부르는데, `TapoAudio`는 이걸 재정의해서 **누군가 들을 때만** Tapo에 연결한다.
+`AudioFanout`은 리스너 목록과 잠금만 가진 작은 클래스다. 첫 리스너가 생길 때 생성할 때 받은 `on_first_listener` 함수를 부른다. `TapoLive`는 이걸로 **누군가 듣거나 볼 때만** Tapo에 연결한다. 실시간 영상의 `H264Fanout`(`docs/webrtc_video.md`)도 같은 클래스를 상속한다.
 
 ### 3. 스레드와 asyncio 잇기
 
@@ -65,8 +65,8 @@ aiortc의 `AudioStreamTrack`을 상속해서 `recv()`를 구현한다. aiortc가
 RTCPeerConnection 생성
 addTransceiver('audio', recvonly)  ← 받기만 함
 createOffer → setLocalDescription
-POST /offer {sdp, type, cam}  ───────────▶ RTCPeerConnection 생성
-                                           cam에 맞는 소리 공급원 선택 (Pi 또는 Tapo)
+POST /offer {sdp, type, cam,  ───────────▶ RTCPeerConnection(iceServers=[]) 생성
+            media: 'audio'}                cam에 맞는 소리 공급원 선택 (Pi 또는 Tapo)
                                            MicrophoneTrack 추가
                                            setRemoteDescription(offer)
                                            createAnswer → setLocalDescription
@@ -78,14 +78,14 @@ ontrack → <audio>.srcObject = 스트림
 
 - **SDP**: 양쪽이 쓸 코덱, 방향(보내기/받기) 등을 적은 문서.
 - **ICE 후보**: 서로에게 닿을 수 있는 주소·포트 목록. 서버가 후보를 다 모으기 전에 answer를 보내면 브라우저가 연결 경로를 몰라 소리가 안 들린다. 그래서 `iceGatheringState == "complete"`까지 기다린 뒤 응답한다 (trickle ICE를 구현하지 않는 대신).
-- 브라우저 쪽 `RTCPeerConnection` 설정에는 공개 STUN 서버(`stun.l.google.com`)가 들어 있다. 폰과 라즈베리파이가 같은 Tailscale 네트워크에 있어서 중계(TURN) 서버는 쓰지 않는다.
+- 폰과 라즈베리파이가 같은 Tailscale 네트워크에 있어서 중계(TURN) 서버는 쓰지 않는다. 서버 쪽은 STUN 서버도 쓰지 않는다(`iceServers=[]`). 라즈베리파이 자체 주소로 충분하고, STUN을 쓰면 공인 주소 확인에 연결마다 5초씩 걸렸다 (`docs/troubleshooting.md` 16번). 브라우저 쪽 소리 연결 설정에는 공개 STUN 서버가 남아 있지만 연결에 쓰이지 않는다.
 
-### 6. Tapo 마이크 (`TapoAudio`)
+### 6. Tapo 마이크 (`TapoLive`)
 
 - Tapo RTSP 스트림에는 G.711 A-law, 8kHz 소리가 같이 들어 있다.
-- PyAV로 RTSP를 열고 **오디오 패킷만** 꺼내 디코딩한다 (영상은 디코딩하지 않아 CPU 부담이 적음).
+- PyAV로 RTSP(stream2)를 열고 오디오 패킷을 디코딩한다. 영상 패킷은 디코딩하지 않고 그대로 실시간 영상 쪽에 넘긴다 (`docs/webrtc_video.md`). 한 연결로 둘 다 받아서 보면서 소리를 켜도 카메라 연결이 늘지 않는다.
 - `AudioResampler`로 8kHz → 48kHz, int16 mono로 바꾸고, 960샘플씩 잘라 `dispatch`한다.
-- 듣는 사람이 없으면 연결을 끊는다 (소리를 켜면 카메라 RTSP 연결이 1개 → 2개, 끄면 다시 1개로 확인).
+- 듣거나 보는 사람이 없으면 연결을 끊는다.
 
 ### 7. 탭을 바꾸면
 
@@ -108,6 +108,6 @@ iOS(크롬 포함, 모두 WebKit)는 **사용자가 탭한 그 순간** 시작�
 
 ## 한계
 
-- 영상(MJPEG)과 소리(WebRTC)가 다른 경로라 소리가 조금 먼저 들린다.
+- 영상과 소리가 별도 WebRTC 연결이라 싱크가 조금 어긋날 수 있다.
 - Tapo는 조용하면 잡음 제거 때문에 거의 0에 가까운 값을 보낸다. 조용할 때 측정으로는 "소리가 작다"와 "안 들어온다"를 구분하기 어렵다.
 - 아직 듣기만 된다. 말하기(양방향)는 라즈베리파이에 스피커가 필요하다.

@@ -8,11 +8,12 @@
 
 - `app.py`: Flask 앱, 라우트, 모든 구성 요소를 `if __name__ == "__main__"`에서 생성
 - `picam.py`: Pi 카메라 캡처(`VideoGet`), 날짜/시각 표시, 멈춤 감시와 자동 복구
-- `tapo.py`: Tapo C210 RTSP 영상(`TapoCamera`), ONVIF PTZ, 마이크(`TapoAudio`)
+- `tapo.py`: Tapo C210 RTSP 영상(`TapoCamera`, 움직임 감지·예비 MJPEG용), ONVIF PTZ, 실시간 영상·마이크(`TapoLive`)
 - `pan_tilt.py`: PCA9685 + GH-S37D 서보 2개, 부드럽게 움직이기(백그라운드 스레드)
 - `recorder.py`: 24시간 녹화(10분 MP4), 3일 보관 정리, 녹화 목록
 - `motion.py`: 두 카메라 공통 움직임 감지(`FrameMotion`, 흔들림 보정)
-- `mjpeg.py`: 실시간 영상(프레임당 JPEG 한 번만 인코딩해서 공유)
+- `webrtc_video.py`: 실시간 영상 WebRTC. 압축된 H.264를 다시 압축하지 않고 전달(`H264Fanout`, `EncodedVideoTrack`). Pi는 녹화 인코더 출력을 나눠 씀
+- `mjpeg.py`: 예비 실시간 영상(WebRTC 실패 시, `?mjpeg`). 프레임당 JPEG 한 번만 인코딩해서 공유
 - `audio.py`: 소리 나눠 보내기(`AudioFanout`), 실시간 소리는 WebRTC(aiortc)
 - `applog.py`: 로그 설정, `supervised_thread`(백그라운드 작업이 죽으면 다시 시작)
 
@@ -45,6 +46,9 @@
 - **USB 마이크는 sounddevice(PortAudio)로**: pip로 설치한 PyAV(aiortc)의 내장 ALSA는 마이크를 못 염. 마이크는 한 번만 열고 `AudioFanout`으로 실시간 듣기와 녹화에 나눠 줌
 - **Pi 카메라 `capture_array()`를 시간 제한 없이 부르지 말 것**: 센서가 멈추면("Camera frontend has timed out") 영원히 기다림. `wait=False` + `wait(job, timeout)` 사용
 - **`picam2.stop()`/`stop_encoder()`는 멈출 수 있음**: 다시 열기는 `run_with_timeout`으로 감싸고, 안 되면 서비스 재시작으로 넘김
+- **aiortc 코덱 고정은 `setRemoteDescription` 전에**: aiortc는 브라우저 offer를 적용하는 순간 코덱을 정함. 그 뒤에 `setCodecPreferences`를 하면 VP8이 선택되고 영상이 안 나옴
+- **서버 WebRTC에 STUN 넣지 말 것**: Tailscale 안에서는 필요 없고, 공인 주소 확인에 연결마다 5초 걸림 (`iceServers=[]`)
+- **실시간 영상을 프레임으로 받아 aiortc에서 다시 압축하지 말 것**: 라즈베리파이 CPU로는 너무 무거움. `av.Packet`(압축된 H.264)을 넘김
 - iOS: 오디오는 버튼을 누른 그 순간에 무음 WAV를 loop 재생해서 잠금 해제, 공유 창(`navigator.share`)도 같은 순간에 열어야 함
 
 ## 알려진 하드웨어 문제 (아직 해결 안 됨)

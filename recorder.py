@@ -30,6 +30,9 @@ SEGMENT_SECONDS = 600  # 10분 단위 파일
 KEEP_DAYS = 3
 MIN_FREE_BYTES = 10 * 1024 ** 3  # 남은 공간이 10GB 아래면 3일이 안 됐어도 오래된 것부터 삭제
 PI_BITRATE = 1_500_000
+# 키프레임(화면 전체) 간격, 프레임 수. 실시간 보기는 키프레임부터 시작할 수 있어서 간격이 곧 첫 화면 대기 시간.
+# 기본값(60프레임 = 약 3.6초)을 30프레임(약 1.8초)으로 줄임. 비트레이트가 같아서 파일 크기는 그대로
+PI_KEYFRAME_INTERVAL = 30
 PI_AUDIO_RATE = 48000
 TAPO_RECOVERED_AFTER = 15  # 다시 시작한 Tapo 녹화가 이 시간(초) 넘게 이어지면 복구된 것으로 봄
 
@@ -224,11 +227,14 @@ class PiRecorder:
     소리는 USB 마이크(실시간 듣기와 같은 소스)에서 함께 녹음
 
     카메라가 멈춰서 VideoGet이 카메라를 다시 열 때는 녹화를 잠깐 멈췄다가 새 카메라로 이어서 녹화함
+    녹화용 USB가 없어도 실시간 보기를 위해 인코더는 계속 돌림
     """
 
-    def __init__(self, video_get, audio_source):
+    def __init__(self, video_get, audio_source, live_video):
         self.video_get = video_get
         self.audio_source = audio_source
+        # 같은 H.264를 실시간 보기(WebRTC)에도 나눠 줌. 인코더가 하나라 압축은 한 번만 함
+        self.live_output = LiveVideoOutput(live_video)
         self._stopping = False
         self._paused = False
         video_get.before_restart.append(self.pause)
@@ -262,37 +268,55 @@ class PiRecorder:
             if self._paused:
                 time.sleep(1)
                 continue
-            if not storage_ready():
-                time.sleep(30)
-                continue
-            os.makedirs(camera_dir("pi"), exist_ok=True)
-            output = FfmpegAudioOutput(" ".join(segment_args("pi")), self.audio_source)
+            outputs = [self.live_output]
+            recording = None
+            if storage_ready():
+                os.makedirs(camera_dir("pi"), exist_ok=True)
+                recording = FfmpegAudioOutput(" ".join(segment_args("pi")), self.audio_source)
+                outputs.append(recording)
             with self.video_get.camera_lock:
                 if self._paused:
                     continue
                 picam2 = self.video_get.picam2
                 try:
-                    picam2.start_encoder(H264Encoder(bitrate=PI_BITRATE), output)
+                    picam2.start_encoder(H264Encoder(bitrate=PI_BITRATE, iperiod=PI_KEYFRAME_INTERVAL), outputs)
                 except Exception:
                     picam2 = None
             if picam2 is None:
                 time.sleep(30)
                 continue
-            # ffmpeg가 끝나면(USB 빠짐, 카메라 재시작 등) 인코더를 멈추고 다시 시작
-            while not self._stopping and not self._paused and output.ffmpeg is not None and output.ffmpeg.poll() is None:
-                time.sleep(1)
+            if recording is not None:
+                # ffmpeg가 끝나면(USB 빠짐, 카메라 재시작 등) 인코더를 멈추고 다시 시작
+                while not self._stopping and not self._paused and recording.ffmpeg is not None and recording.ffmpeg.poll() is None:
+                    time.sleep(1)
+            else:
+                # USB가 없는 동안은 실시간 보기만: USB가 다시 준비되면 녹화를 붙여서 다시 시작
+                while not self._stopping and not self._paused and not storage_ready():
+                    time.sleep(30)
             if self._stopping:
                 return
-            if not self._paused:
-                code = output.ffmpeg.poll() if output.ffmpeg is not None else None
+            if recording is not None and not self._paused:
+                code = recording.ffmpeg.poll() if recording.ffmpeg is not None else None
                 log.warning(f"Pi 녹화(ffmpeg)가 끝남 (종료 코드 {code}), 5초 뒤 다시 시작")
             with self.video_get.camera_lock:
                 try:
                     picam2.stop_encoder()
                 except Exception:
                     pass
-            if not self._paused:
+            if recording is not None and not self._paused:
                 time.sleep(5)
+
+
+class LiveVideoOutput(Output):
+    """Picamera2 인코더가 만든 H.264 프레임을 실시간 보기(H264Fanout)로 넘김"""
+
+    def __init__(self, fanout):
+        super().__init__()
+        self.fanout = fanout
+
+    def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+        if not audio and self.fanout.has_listeners():
+            self.fanout.dispatch((bytes(frame), keyframe))
 
 
 def _parse_start(name):

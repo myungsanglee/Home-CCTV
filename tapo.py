@@ -13,6 +13,7 @@ from onvif.client import ONVIFService
 
 from applog import supervised_thread
 from audio import AudioFanout
+from webrtc_video import H264Fanout, has_sps
 
 log = logging.getLogger("tapo")
 
@@ -188,27 +189,35 @@ class TapoCamera:
         self._call_ptz("AbsoluteMove", {"Position": {"PanTilt": {"x": 0.0, "y": 0.0}}})
 
 
-class TapoAudio(AudioFanout):
-    """Tapo 마이크 소리: 듣는 사람이 있을 때만 RTSP에서 오디오만 받아와서
-    (8kHz G.711 -> 48kHz) 960샘플 조각으로 나눠 보냄. 영상은 디코딩하지 않음"""
+class TapoLive:
+    """Tapo 실시간 영상(H.264 그대로)과 소리: 보거나 듣는 사람이 있을 때만 stream2에 연결
+
+    - video (H264Fanout): 카메라가 압축한 H.264 프레임을 다시 압축하지 않고 나눠 줌 (webrtc_video.py)
+    - audio (AudioFanout): 8kHz G.711 소리를 48kHz로 바꿔 960샘플 조각으로 나눠 줌
+    한 번의 RTSP 연결로 둘 다 받아서, 영상을 보면서 소리를 켜도 카메라 연결이 늘지 않음
+    """
 
     def __init__(self, rtsp_url, sample_rate=48000, chunk_size=960):
-        super().__init__()
         self.rtsp_url = rtsp_url
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
+        self.video = H264Fanout(on_first_listener=self._ensure_running)
+        self.audio = AudioFanout(on_first_listener=self._ensure_running)
         self._thread = None
         self._thread_lock = Lock()
 
-    def _on_first_listener(self):
+    def _in_use(self):
+        return self.video.has_listeners() or self.audio.has_listeners()
+
+    def _ensure_running(self):
         with self._thread_lock:
             if self._thread is None:
-                self._thread = supervised_thread("tapo-audio", self._run)
+                self._thread = supervised_thread("tapo-live", self._run)
 
     def _run(self):
         while True:
             with self._thread_lock:
-                if not self.has_listeners():
+                if not self._in_use():
                     self._thread = None
                     return
             try:
@@ -217,20 +226,36 @@ class TapoAudio(AudioFanout):
                 time.sleep(3)
                 continue
             try:
-                stream = container.streams.audio[0]
-                resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
-                buf = np.zeros(0, np.int16)
-                for packet in container.demux(stream):
-                    if not self.has_listeners():
-                        break
-                    for frame in packet.decode():
-                        for out in resampler.resample(frame):
-                            buf = np.concatenate([buf, out.to_ndarray().reshape(-1)])
-                    while len(buf) >= self.chunk_size:
-                        self.dispatch(buf[:self.chunk_size].reshape(-1, 1).copy())
-                        buf = buf[self.chunk_size:]
+                self._relay(container)
             except Exception:
                 # 연결이 끊기면 잠시 후 다시 연결
                 time.sleep(3)
             finally:
                 container.close()
+
+    def _relay(self, container):
+        video = container.streams.video[0]
+        audio = container.streams.audio[0] if container.streams.audio else None
+        # SPS/PPS(재생에 필요한 설정)가 키프레임 앞에 없으면 연결 정보(extradata)에서 붙여 줌
+        extradata = bytes(video.codec_context.extradata or b"")
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
+        buf = np.zeros(0, np.int16)
+        streams = [video] + ([audio] if audio else [])
+        for packet in container.demux(streams):
+            if not self._in_use():
+                return
+            if packet.size == 0:
+                continue
+            if packet.stream is video:
+                if self.video.has_listeners():
+                    data = bytes(packet)
+                    if packet.is_keyframe and extradata and not has_sps(data):
+                        data = extradata + data
+                    self.video.dispatch((data, packet.is_keyframe))
+            elif self.audio.has_listeners():
+                for frame in packet.decode():
+                    for out in resampler.resample(frame):
+                        buf = np.concatenate([buf, out.to_ndarray().reshape(-1)])
+                while len(buf) >= self.chunk_size:
+                    self.audio.dispatch(buf[:self.chunk_size].reshape(-1, 1).copy())
+                    buf = buf[self.chunk_size:]

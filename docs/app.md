@@ -14,11 +14,11 @@
 setup_logging()                         로그 설정
 VideoGet().start()                      Pi 카메라 캡처
 TapoCamera(...).start()                 Tapo 영상 (.env에 설정이 있을 때만)
-MjpegStream(...) × 2                    실시간 영상
-TapoAudio(...)                          Tapo 마이크 (들을 때만 연결)
+MjpegStream(...) × 2                    예비 실시간 영상 (MJPEG)
+TapoLive(...)                           Tapo 실시간 영상·마이크 (보거나 들을 때만 연결)
 PanTiltServo()                          서보 (저장된 위치로 이동)
 sounddevice.InputStream(...).start()    USB 마이크 (한 번만 열고 유지)
-PiRecorder / TapoRecorder / RecordingCleaner   24시간 녹화, 보관 정리
+PiRecorder / TapoRecorder / RecordingCleaner   24시간 녹화, 보관 정리 (PiRecorder 인코더 출력은 실시간 영상에도)
 FrameMotion × 2                         움직임 감지
 signal(SIGTERM/SIGINT) → 녹화 정리 후 종료
 picam.on_fatal → 녹화 정리 후 os._exit(1)
@@ -33,8 +33,8 @@ Tapo 설정(`TAPO_IP`, `TAPO_USER`)이 없으면 Tapo 관련 부분을 모두 �
 |---|---|---|
 | `/`, `/login`, `/logout` | — | 첫 화면, 로그인/로그아웃 |
 | `/get_cam` | 페이지 | 실시간 화면 |
-| `/video_feed`, `/video_feed/tapo` | 페이지 | MJPEG 스트림 |
-| `/offer` | 페이지 | WebRTC 소리 연결 (`docs/audio.md`) |
+| `/video_feed`, `/video_feed/tapo` | 페이지 | 예비 MJPEG 스트림 |
+| `/offer` | 페이지 | WebRTC 연결. `media: "video"`면 실시간 영상(`docs/webrtc_video.md`), 아니면 소리(`docs/audio.md`) |
 | `/servo/<방향>?cam=tapo` | API | 서보/PTZ 이동, Center |
 | `/set/angle` | API | 버튼 한 번에 움직일 각도 |
 | `/recordings`, `/recordings/list`, `/recordings/file/<cam>/<name>` | 페이지/API | 녹화 목록, 재생·다운로드 |
@@ -72,14 +72,16 @@ Tapo 설정(`TAPO_IP`, `TAPO_USER`)이 없으면 Tapo 관련 부분을 모두 �
 
 ### 실시간 화면 `get_cam.html`
 
-- **카메라 탭**: Pi 카메라 / Tapo. 영상 주소, 버튼 요청(`?cam=tapo`), 소리 공급원이 같이 바뀐다. 마지막 탭은 `localStorage`에 기억.
+- **실시간 영상**: WebRTC로 H.264를 받아 `<video>`에 보여준다. 끊기면 마지막 화면을 둔 채 다시 연결하고, 3번 연속 실패하면 MJPEG `<img>`로 바꾼다. 다른 앱/탭으로 가면 연결을 끊는다 (`docs/webrtc_video.md`).
+- **카메라 탭**: Pi 카메라 / Tapo. 영상 연결, 버튼 요청(`?cam=tapo`), 소리 공급원이 같이 바뀐다. 마지막 탭은 `localStorage`에 기억.
 - **방향 버튼, 각도 선택(1°~20°), Center**: 고른 각도도 `localStorage`에 기억하고 페이지를 열 때 서버에 다시 보낸다.
 - **소리 버튼**: WebRTC (`docs/audio.md`).
-- **화면 저장 버튼**: 지금 `<img>`에 보이는 프레임을 캔버스에 그려 JPEG로 만든다. 모바일은 공유 창(`navigator.share`)의 "이미지 저장"으로 사진 앱에, PC는 다운로드. iOS는 공유 창을 버튼을 누른 그 순간 열어야 해서, `toDataURL` → `atob`로 비동기 없이 파일을 만든다. 확대 중이어도 원본 1280x720 전체가 저장된다.
+- **화면 저장 버튼**: 지금 보이는 `<video>`(또는 예비 `<img>`)의 프레임을 캔버스에 그려 JPEG로 만든다. 모바일은 공유 창(`navigator.share`)의 "이미지 저장"으로 사진 앱에, PC는 다운로드. iOS는 공유 창을 버튼을 누른 그 순간 열어야 해서, `toDataURL` → `atob`로 비동기 없이 파일을 만든다. 확대 중이어도 원본 1280x720 전체가 저장된다.
 - **영상 확대** (브라우저 확대가 아니라 영상만):
   - 더블탭/더블클릭: 누른 곳을 중심으로 2배, 다시 하면 원래대로.
   - 두 손가락: 1~4배. 시작할 때 손가락 사이에 있던 영상 지점이 손가락 사이를 따라오도록 계산한다.
   - 확대 중 한 손가락/마우스로 끌어서 이동. 영상 가장자리 밖으로는 못 나가게 이동 범위를 제한한다.
+  - `<video>`와 `<img>`를 감싼 `#videoInner`에 적용해서 두 경로가 같게 동작한다.
   - 계산: `transform: translate(tx, ty) scale(s)`, `transform-origin: 0 0`. 화면 좌표 p에서 배율을 s→s'로 바꿀 때 그 지점이 그대로 있으려면 `t' = p - (p - t) / s × s'`. 이동 범위는 `tx ∈ [w × (1 - s), 0]`.
   - 버튼을 빠르게 눌러도 iOS가 페이지를 확대하지 않도록 `touch-action: manipulation`. 영상 위는 `pan-x pan-y`(한 손가락 스크롤만 허용), 확대 중에는 `none`. iOS 고유 `gesturestart` 이벤트도 막는다.
 

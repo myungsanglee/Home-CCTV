@@ -15,7 +15,8 @@
 | `segment_args(cam)` | 10분 단위로 파일을 나누는 ffmpeg 옵션 |
 | `TapoRecorder` | Tapo RTSP를 ffmpeg로 그대로 저장. 끊기면 5초 뒤 다시 시작, 끊긴 이유 기록 |
 | `FfmpegAudioOutput` | Picamera2 출력 클래스 확장: H.264 영상 + 마이크 소리를 함께 ffmpeg로 |
-| `PiRecorder` | Pi 카메라 하드웨어 인코더로 녹화. 카메라 복구 중엔 잠깐 멈췄다 이어감 |
+| `PiRecorder` | Pi 카메라 하드웨어 인코더로 녹화. 카메라 복구 중엔 잠깐 멈췄다 이어감. 같은 인코더 출력을 실시간 보기에도 나눠 줌 |
+| `LiveVideoOutput` | 인코더가 만든 H.264 프레임을 실시간 보기(`H264Fanout`)로 넘기는 Picamera2 출력 |
 | `stop_all()` | 서비스 종료 시 모든 녹화를 정상 종료 |
 | `list_recordings(cam)` | 녹화가 끝난 재생 가능한 파일 목록 + 움직임 여부 |
 | `recording_path(cam, name)` | 웹이 요청한 파일 이름을 검증해서 경로로 바꿈 |
@@ -76,6 +77,13 @@ ffmpeg  -use_wallclock_as_timestamps 1 -i -          ← 영상 (stdin)
 - `aresample=async=1`: 소리 조각이 조금 늦거나 빨리 와도 시간에 맞게 늘이고 줄인다.
 - 파이프 쓰기는 non-blocking(`O_NONBLOCK`)으로 연다. 녹화 쪽이 밀려도 **마이크 콜백(실시간 듣기)이 막히지 않게** 하고, 그때는 그 조각만 녹화에서 버린다. 한 조각(1920바이트)은 파이프 원자적 쓰기 한계(4096바이트)보다 작아서 반만 쓰이는 일은 없다.
 
+### 3-1. 실시간 보기와 인코더 나눠 쓰기
+
+Picamera2 인코더에는 출력을 리스트로 줄 수 있다. `[LiveVideoOutput, FfmpegAudioOutput]`를 줘서 한 번 압축한 H.264를 녹화와 실시간 보기(WebRTC)가 같이 쓴다 (`docs/webrtc_video.md`).
+
+- USB가 없으면 `LiveVideoOutput`만 붙여서 인코더를 계속 돌리고, USB가 다시 준비되면 녹화를 붙여 인코더를 다시 시작한다.
+- 실시간 보기는 키프레임부터 시작할 수 있어서 키프레임 간격을 30프레임(약 1.8초, 기본값은 약 3.6초)으로 줄였다. 비트레이트가 같아서 파일 크기는 그대로다.
+
 ### 4. 서비스가 꺼질 때 파일 닫기
 
 MP4는 녹화를 끝낼 때 moov를 써야 재생된다. ffmpeg를 강제로 죽이면 파일이 깨진다.
@@ -117,7 +125,8 @@ MP4는 녹화를 끝낼 때 moov를 써야 재생된다. ffmpeg를 강제로 죽
 | `SEGMENT_SECONDS` | 600 | 웹에서 고르기 쉬운 단위, 정전 시 잃는 양을 최대 10분으로 제한 |
 | `KEEP_DAYS` | 3 | 사용자 요구. 112GB USB에 두 카메라 3일 |
 | `MIN_FREE_BYTES` | 10GB | 움직임 많은 날 Tapo 용량이 2~3배로 늘 수 있어 안전장치 |
-| `PI_BITRATE` | 1.5Mbps | 720p 실내 장면에 충분, 실측 약 1.2Mbps |
+| `PI_BITRATE` | 1.5Mbps | 720p 실내 장면에 충분, 실측 약 1.2Mbps. 실시간 보기도 같은 화질 |
+| `PI_KEYFRAME_INTERVAL` | 30프레임 | 실시간 보기 첫 화면 대기를 최대 약 1.8초로 |
 | Tapo 스트림 | stream1 (2304x1296) | 사용자 선택(고화질). 실시간 화면은 stream2(720p) |
 | Tapo 소리 | AAC 32kbps | G.711 A-law는 MP4에 못 넣어서 변환 |
 
