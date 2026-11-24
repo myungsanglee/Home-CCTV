@@ -13,7 +13,7 @@
 |---|---|
 | `storage_ready()` | `/mnt/cctv`에 USB가 연결돼 있는지. 없으면 녹화하지 않음 (SD 카드 보호) |
 | `segment_args(cam)` | 10분 단위로 파일을 나누는 ffmpeg 옵션 |
-| `TapoRecorder` | Tapo RTSP를 ffmpeg로 그대로 저장. 끊기면 5초 뒤 다시 시작, 끊긴 이유 기록 |
+| `TapoRecorder` | Tapo RTSP를 PyAV로 받아 ffmpeg 표준 입력으로 넘겨 그대로 저장. 끊기면 5초 뒤 다시 시작, 끊긴 이유 기록 |
 | `FfmpegAudioOutput` | Picamera2 출력 클래스 확장: H.264 영상 + 마이크 소리를 함께 ffmpeg로 |
 | `PiRecorder` | Pi 카메라 하드웨어 인코더로 녹화. 카메라 복구 중엔 잠깐 멈췄다 이어감. 같은 인코더 출력을 실시간 보기에도 나눠 줌 |
 | `LiveVideoOutput` | 인코더가 만든 H.264 프레임을 실시간 보기(`H264Fanout`)로 넘기는 Picamera2 출력 |
@@ -26,7 +26,8 @@
 
 | 라이브러리/도구 | 용도 | 선택 이유 |
 |---|---|---|
-| **ffmpeg** (외부 프로그램) | RTSP 수신, 파일 저장, 10분 분할, 소리 변환 | 영상 다시 인코딩 없이 복사(`-c copy`)할 수 있고, segment 기능으로 분할이 쉬움 |
+| **ffmpeg** (외부 프로그램) | 파일 저장, 10분 분할, 소리 변환 | 영상 다시 인코딩 없이 복사(`-c copy`)할 수 있고, segment 기능으로 분할이 쉬움 |
+| **PyAV** | Tapo RTSP 수신 (압축된 패킷 그대로) | 카메라 계정이 든 RTSP 주소를 ffmpeg 명령줄에 넣지 않기 위해 (아래 2-1) |
 | **Picamera2 `H264Encoder`** | Pi 카메라 영상을 하드웨어로 H.264 압축 | 라즈베리파이 4의 하드웨어 인코더라 CPU 부담이 거의 없음 (ffmpeg 1%) |
 | **python-prctl** | 앱이 죽으면 ffmpeg도 정리 | Linux `PR_SET_PDEATHSIG` 설정 (아래 참고) |
 
@@ -51,10 +52,24 @@
 
 **faststart를 쓰지 않는 이유**: MP4는 재생 정보(moov, 목차)가 있어야 재생된다. `movflags=+faststart`는 파일을 닫을 때 moov를 앞으로 옮기려고 파일 전체(약 100MB)를 다시 쓰는데, 그동안 ffmpeg가 5~10초 막혀 Pi 카메라까지 멈췄다 (`docs/troubleshooting.md` 1번). 지금은 moov가 파일 끝에 붙고, 브라우저는 HTTP Range 요청으로 끝부분을 먼저 읽어 재생한다.
 
-### 2-1. Tapo 녹화가 끊길 때
+### 2-1. Tapo 녹화: RTSP 주소를 ffmpeg에 넘기지 않음
 
-- ffmpeg 오류 출력(stderr)은 RTSP 주소를 그대로 찍는데, 주소에 카메라 계정이 들어 있다. 그래서 서비스 로그로 바로 보내지 않고 앱이 받아서 계정을 `rtsp://***@`로 가린 뒤 마지막 몇 줄만 보관한다.
-- 처음 끊긴 순간에만 한 줄 기록한다: `tapo.probe_rtsp`로 구한 이유 + 가린 ffmpeg 메시지 (예: `Connection timed out`).
+```
+앱(PyAV)  av.open(rtsp://계정@카메라/stream1, use_wallclock_as_timestamps)
+   │  압축된 H.264 + G.711 패킷 그대로 (다시 인코딩 없음)
+   ▼  NUT 형식으로 표준 입력에
+ffmpeg -f nut -i pipe:0 -c:v copy -c:a aac -b:a 32k -f segment ...
+```
+
+- RTSP 주소에는 카메라 계정(아이디·비밀번호)이 들어 있다. 예전처럼 `ffmpeg -i rtsp://...`로 실행하면 명령줄이 `ps`, `/proc/<pid>/cmdline`에 그대로 보여서, 진단하다 출력을 복사하는 것만으로 비밀번호가 새어 나갔다.
+- 그래서 앱이 PyAV로 직접 연결해 패킷을 넘기고, ffmpeg는 주소를 모른 채 소리 변환·분할 저장만 한다. 실시간 영상(`TapoLive`)도 같은 PyAV로 RTSP를 받는다.
+- **받은 시각을 타임스탬프로 씀**(`use_wallclock_as_timestamps`): RTSP 타임스탬프는 연결 직후 RTCP 동기화로 한 번 앞으로 튀었다가 돌아와서, 그대로 넘기면 순서가 맞지 않는 앞부분 약 4초(패킷 약 30%)를 버려야 했다. 받은 시각으로 바꾸니 버리는 패킷 0개.
+- 종료: `stop()`이 `_stopping`을 켜면 입력 쪽이 표준 입력을 닫고, ffmpeg는 입력 끝(EOF)을 보고 파일을 정리한 뒤 끝난다. 5초 안에 안 끝나면 SIGINT를 한 번만 보낸다.
+
+### 2-2. Tapo 녹화가 끊길 때
+
+- ffmpeg 오류 출력(stderr)은 서비스 로그로 바로 보내지 않고 앱이 받아서 계정을 `rtsp://***@`로 가린 뒤 마지막 몇 줄만 보관한다. RTSP 연결 오류(PyAV)도 주소가 들어갈 수 있어 같은 방법으로 가린다.
+- 처음 끊긴 순간에만 한 줄 기록한다: `tapo.probe_rtsp`로 구한 이유 + 가린 RTSP 오류 또는 ffmpeg 메시지 (예: `Connection timed out`).
   - 카메라가 네트워크에서 사라진 경우는 실시간 영상 쪽이 같은 원인을 경고로 남기므로 일반 기록(INFO)으로만.
   - 카메라는 응답하는데 녹화만 실패하면 경고(WARNING).
 - 끊긴 동안의 재시도(5초마다)는 기록하지 않는다. 다시 시작한 녹화가 15초 넘게 이어지면 "다시 시작됨 (N초 끊김, 재시도 M번)"을 한 줄 남긴다.
@@ -90,7 +105,7 @@ MP4는 녹화를 끝낼 때 moov를 써야 재생된다. ffmpeg를 강제로 죽
 
 - systemd unit의 `KillMode=mixed`: 종료 신호(SIGTERM)를 **앱에만** 보낸다.
 - 앱이 신호를 받으면 `stop_all()`:
-  - Tapo: ffmpeg에 SIGINT를 **한 번만** 보내고 끝날 때까지(최대 20초) 기다림. ffmpeg는 종료 신호를 3번 넘게 받으면 정리 없이 꺼진다.
+  - Tapo: 입력 쪽이 ffmpeg 표준 입력을 닫아 ffmpeg가 파일을 정리하고 끝남. 5초 안에 안 끝나면 SIGINT를 **한 번만** 보내고 최대 20초 기다림. ffmpeg는 종료 신호를 3번 넘게 받으면 정리 없이 꺼진다.
   - Pi: 인코더를 멈추면 ffmpeg 입력이 닫히고 ffmpeg가 파일을 정리한 뒤 끝남.
 - 앱이 갑자기 죽는 경우를 대비해 ffmpeg를 띄울 때 `prctl.set_pdeathsig(SIGTERM)`: 부모(앱)가 죽으면 커널이 ffmpeg에 SIGTERM을 보낸다.
 

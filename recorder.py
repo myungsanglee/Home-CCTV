@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from threading import Thread
 from urllib.parse import urlsplit
 
+import av
 import prctl
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FfmpegOutput
@@ -93,12 +94,18 @@ def _warn_no_storage_once_per_hour():
 
 
 class TapoRecorder:
-    """Tapo 고화질 스트림을 다시 인코딩하지 않고 그대로 파일에 저장 (소리는 AAC로 변환)"""
+    """Tapo 고화질 스트림을 다시 인코딩하지 않고 그대로 파일에 저장 (소리는 AAC로 변환)
+
+    RTSP 주소(카메라 계정 포함)를 ffmpeg 명령줄에 넣지 않음: 명령줄은 `ps`나 /proc/<pid>/cmdline으로
+    누구나 볼 수 있음. 앱이 PyAV로 RTSP를 직접 받아, 압축된 그대로(다시 인코딩 없이) ffmpeg 표준 입력에
+    NUT 형식으로 넘기고, ffmpeg는 소리 변환·10분 분할 저장만 함.
+    """
 
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
         self._proc = None
         self._stopping = False
+        self._input_error = None
 
     def start(self):
         _recorders.append(self)
@@ -108,20 +115,67 @@ class TapoRecorder:
     def stop(self):
         self._stopping = True
         proc = self._proc
-        if proc is not None and proc.poll() is None:
-            # 종료 요청은 한 번만 (여러 번 받으면 ffmpeg가 파일 정리 없이 바로 꺼짐)
-            proc.send_signal(signal.SIGINT)
+        if proc is None or proc.poll() is not None:
+            return
+        # 보통은 입력 쪽(_pump)이 _stopping을 보고 표준 입력을 닫으면 ffmpeg가 파일을 닫고 스스로 끝남
+        try:
+            proc.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        # 입력이 멈춰 있으면 종료 요청은 한 번만 (여러 번 받으면 ffmpeg가 파일 정리 없이 바로 꺼짐)
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    def _pump(self, proc):
+        """RTSP를 받아 ffmpeg 표준 입력으로 넘김. 끝나면(끊김, 종료) 표준 입력을 닫아 ffmpeg가 파일을 닫게 함"""
+        self._input_error = None
+        inp = out = None
+        try:
+            # 받은 시각을 타임스탬프로 씀: RTSP 타임스탬프는 연결 직후 RTCP 동기화로 한 번 튀어서
+            # 그대로 넘기면 앞부분 몇 초가 순서가 맞지 않아 버려짐 (Pi 녹화도 같은 방식)
+            inp = av.open(self.rtsp_url, timeout=10, options={
+                "rtsp_transport": "tcp", "timeout": "10000000", "use_wallclock_as_timestamps": "1"})
+            sources = [inp.streams.video[0]] + list(inp.streams.audio[:1])
+            out = av.open(proc.stdin, mode="w", format="nut")
+            targets = {s.index: out.add_stream_from_template(s) for s in sources}
+            last_dts = {}
+            for packet in inp.demux(*sources):
+                if self._stopping:
+                    break
+                if packet.dts is None or packet.pts is None:
+                    continue
+                src = packet.stream.index
+                if src in last_dts and packet.dts <= last_dts[src]:
+                    continue
+                last_dts[src] = packet.dts
+                packet.stream = targets[src]
+                out.mux(packet)
+        except Exception as e:
+            # PyAV 오류 메시지에 주소(계정 포함)가 들어갈 수 있어 가림
+            if not self._stopping:
+                self._input_error = redact(str(e)) or type(e).__name__
+        finally:
+            for container in (out, inp):
+                if container is not None:
+                    try:
+                        container.close()
+                    except Exception:
+                        pass
             try:
-                proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+                proc.stdin.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _read_errors(proc, errors):
-        # ffmpeg 오류 출력은 RTSP 주소(카메라 계정 포함)를 그대로 찍어서, 서비스 로그로 바로 보내지 않고
-        # 앱이 받아서 계정을 가린 뒤 마지막 몇 줄만 끊긴 이유로 씀
-        for line in proc.stderr:
-            line = redact(line.strip())
+        # ffmpeg 오류 출력은 서비스 로그로 바로 보내지 않고 마지막 몇 줄만 끊긴 이유로 씀
+        # (지금은 ffmpeg가 RTSP 주소를 모르지만, 혹시 몰라 계속 가림)
+        for raw in proc.stderr:
+            line = redact(raw.decode(errors="replace").strip())
             if line:
                 errors.append(line)
 
@@ -135,16 +189,18 @@ class TapoRecorder:
                 continue
             os.makedirs(camera_dir("tapo"), exist_ok=True)
             cmd = [
-                "ffmpeg", "-nostdin", "-loglevel", "error",
-                "-rtsp_transport", "tcp", "-timeout", "10000000",
-                "-i", self.rtsp_url,
+                "ffmpeg", "-loglevel", "error",
+                "-f", "nut", "-i", "pipe:0",
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "32k",
             ] + segment_args("tapo")
-            self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                          text=True, errors="replace", preexec_fn=_kill_with_parent)
+            # 표준 입력에 영상 바이트를 쓰므로 text 모드 없이 (오류 출력은 _read_errors에서 직접 디코딩)
+            self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          preexec_fn=_kill_with_parent)
             errors = deque(maxlen=5)
             reader = Thread(target=self._read_errors, args=(self._proc, errors), daemon=True)
             reader.start()
+            pump = Thread(target=self._pump, args=(self._proc,), name="tapo-recorder-input", daemon=True)
+            pump.start()
             try:
                 code = self._proc.wait(timeout=TAPO_RECOVERED_AFTER)
             except subprocess.TimeoutExpired:
@@ -153,6 +209,7 @@ class TapoRecorder:
                     log.info(f"Tapo 녹화 다시 시작됨 ({time.time() - down_since:.0f}초 끊김, 재시도 {retries}번)")
                     down_since, retries = None, 0
                 code = self._proc.wait()
+            pump.join(timeout=15)
             reader.join(timeout=2)
             if self._stopping:
                 break
@@ -160,8 +217,11 @@ class TapoRecorder:
             if down_since is None:
                 down_since = time.time()
                 reason = probe_rtsp(host)
-                detail = errors[-1] if errors else f"종료 코드 {code}"
-                message = f"Tapo 녹화가 끊김: {reason} (ffmpeg: {detail})"
+                if self._input_error:
+                    detail = f"RTSP: {self._input_error}"
+                else:
+                    detail = f"ffmpeg: {errors[-1]}" if errors else f"ffmpeg 종료 코드 {code}"
+                message = f"Tapo 녹화가 끊김: {reason} ({detail})"
                 if camera_offline(reason):
                     # 카메라가 네트워크에서 사라진 경우는 실시간 영상 쪽(tapo)이 같은 원인을 경고로 남김
                     log.info(message)
