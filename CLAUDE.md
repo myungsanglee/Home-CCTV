@@ -46,6 +46,7 @@
 - **USB 마이크는 sounddevice(PortAudio)로**: pip로 설치한 PyAV(aiortc)의 내장 ALSA는 마이크를 못 염. 마이크는 한 번만 열고 `AudioFanout`으로 실시간 듣기와 녹화에 나눠 줌
 - **Pi 카메라 `capture_array()`를 시간 제한 없이 부르지 말 것**: 센서가 멈추면("Camera frontend has timed out") 영원히 기다림. `wait=False` + `wait(job, timeout)` 사용
 - **`picam2.stop()`/`stop_encoder()`는 멈출 수 있음**: 다시 열기는 `run_with_timeout`으로 감싸고, 안 되면 서비스 재시작으로 넘김
+- **RTSP 주소(카메라 계정 포함)를 외부 프로그램 명령줄에 넣지 말 것**: 명령줄은 `ps`, `/proc/<pid>/cmdline`으로 누구나 볼 수 있음. RTSP는 앱 안(PyAV/OpenCV)에서 열고, ffmpeg에는 표준 입력으로 넘김 (`recorder.TapoRecorder`)
 - **aiortc 코덱 고정은 `setRemoteDescription` 전에**: aiortc는 브라우저 offer를 적용하는 순간 코덱을 정함. 그 뒤에 `setCodecPreferences`를 하면 VP8이 선택되고 영상이 안 나옴
 - **서버 WebRTC에 STUN 넣지 말 것**: Tailscale 안에서는 필요 없고, 공인 주소 확인에 연결마다 5초 걸림 (`iceServers=[]`)
 - **실시간 영상을 프레임으로 받아 aiortc에서 다시 압축하지 말 것**: 라즈베리파이 CPU로는 너무 무거움. `av.Packet`(압축된 H.264)을 넘김

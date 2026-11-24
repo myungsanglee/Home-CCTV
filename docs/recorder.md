@@ -69,6 +69,7 @@ ffmpeg -f nut -i pipe:0 -c:v copy -c:a aac -b:a 32k -f segment ...
 ### 2-2. Tapo 녹화가 끊길 때
 
 - ffmpeg 오류 출력(stderr)은 서비스 로그로 바로 보내지 않고 앱이 받아서 계정을 `rtsp://***@`로 가린 뒤 마지막 몇 줄만 보관한다. RTSP 연결 오류(PyAV)도 주소가 들어갈 수 있어 같은 방법으로 가린다.
+- 입력 오류는 **RTSP를 읽다가** 난 것만 기록한다. ffmpeg가 먼저 끝나서 앱이 쓰다가 실패한 경우(`Broken pipe`)는 카메라 문제가 아니므로 ffmpeg 오류 출력이나 종료 코드를 이유로 쓴다. (시험: ffmpeg에 SIGTERM 한 번 → "카메라는 응답하지만 영상이 끊김 (ffmpeg 종료 코드 255)", 끊긴 파일도 정상적으로 닫힘)
 - 처음 끊긴 순간에만 한 줄 기록한다: `tapo.probe_rtsp`로 구한 이유 + 가린 RTSP 오류 또는 ffmpeg 메시지 (예: `Connection timed out`).
   - 카메라가 네트워크에서 사라진 경우는 실시간 영상 쪽이 같은 원인을 경고로 남기므로 일반 기록(INFO)으로만.
   - 카메라는 응답하는데 녹화만 실패하면 경고(WARNING).

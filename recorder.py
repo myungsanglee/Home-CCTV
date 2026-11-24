@@ -153,7 +153,12 @@ class TapoRecorder:
                     continue
                 last_dts[src] = packet.dts
                 packet.stream = targets[src]
-                out.mux(packet)
+                try:
+                    out.mux(packet)
+                except Exception:
+                    # ffmpeg가 먼저 끝나서 쓰기 실패(Broken pipe 등): 카메라 문제가 아니므로
+                    # 입력 오류로 남기지 않고, 끊긴 이유는 ffmpeg 오류 출력에서 찾게 함
+                    break
         except Exception as e:
             # PyAV 오류 메시지에 주소(계정 포함)가 들어갈 수 있어 가림
             if not self._stopping:
