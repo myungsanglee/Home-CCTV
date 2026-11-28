@@ -106,7 +106,7 @@ Home-CCTV/
 | 움직임 감지 | 흔들림 보정 프레임 비교, 녹화 목록에 표시 | 운영 중 | [motion](docs/motion.md) |
 | 로그 · 오류 알림 | 목적별 로그 파일, 작업 자동 재시작, 오류 목록 페이지 | 운영 중 | [applog](docs/applog.md) |
 | 보안 | Tailscale HTTPS 전용, 로그인, 버튼 API 인증 | 운영 중 | [app](docs/app.md) |
-| 하드웨어 안정화 | Pi 카메라 센서 가끔 멈춤, 서보 I2C 통신 오류 (서보 전원 분리 검토), Tapo Wi-Fi 끊김 (위치 이동 후, 신호 개선 필요) | 미해결 | [troubleshooting](docs/troubleshooting.md) |
+| 하드웨어 안정화 | Pi 카메라 센서 가끔 멈춤, 서보 I2C 통신 오류 (서보 전원 분리 검토) | 미해결 | [troubleshooting](docs/troubleshooting.md) |
 | 객체 인식 | 고양이/사람 구분 (움직임이 있을 때만 YOLO 등) | 계획 | |
 | 양방향 소리 | 폰 마이크로 말하기 (라즈베리파이 스피커 필요) | 계획 | |
 
